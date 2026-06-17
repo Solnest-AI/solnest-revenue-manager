@@ -27,6 +27,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.report-venv/
 .Python
 
 # ── OS / editor cruft ─────────────────────────────────────────

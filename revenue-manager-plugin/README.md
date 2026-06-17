@@ -79,6 +79,7 @@ The whole revenue-management discipline is wired into how the skill thinks, gene
 - **Comp-Set discipline** — true-comp criteria, the "would a guest pick THAT instead?" test, and how to read comp data — mapped to PriceLabs neighborhood (aggregate) plus AirROI (named, optional).
 - **KPIs & benchmarks** — ADR vs comp median; occupancy 70–85% peak / 40–60% off; RevPAR; pace vs same-time-last-year; page views (500–600 avg vs 2,000–3,500+ top); CTR; conversion; review 4.8+ (below 4.6 = a ranking problem); response under 1 hour.
 - **Owner Communication** — an optional owner-report output following Lead with wins → Context → Honest → Plan.
+- **Spreadsheet export** — on request at the end of a run, a multi-tab Excel workbook: a portfolio **Summary** tab plus **one tab per property** (full breakdown — current vs recommended base/min/max, comps, ask-vs-cleared, KPIs, red flags, reasoning, safety-layer footer). Saved to your Desktop; degrades to a folder of CSVs if `openpyxl` can't be installed. Report-only — nothing is pushed.
 
 ---
 

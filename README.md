@@ -93,6 +93,7 @@ Same end result either way: a working connector, your key kept local, your data 
 - Tracks both your **ask rate** (what's on the calendar) and your **cleared rate** (ADR — what actually booked).
 - Pulls in **RankBreeze, Turno/Breezeway/Operto, and AirROI** automatically when they're connected, for ranking, ops, and competitor context.
 - Hands you a plain-English report of where you're underpriced, overpriced, and what to change.
+- On request, exports a **multi-tab spreadsheet** — a portfolio summary tab plus one tab per property (full breakdown) — saved to your Desktop. Report-only, like everything else.
 
 ---
 

@@ -555,6 +555,7 @@ Then confirm the skill does all of this (this is the proof it's wired up right):
 - **Pulls PMS + PriceLabs in parallel** — full-year forward calendar + history from the PMS, and listings + recommendations + neighborhood comp data from PriceLabs.
 - **Produces a recommend-only report** with the **safety layer** visibly applied: floor/ceiling shown, comp count (N) transparency, native currency, and data freshness (PriceLabs `last_refreshed_at`).
 - **Never auto-writes.** Every proposed change sits behind the approval gate — nothing is pushed to PriceLabs or the PMS without an explicit yes.
+- **Offers a spreadsheet at the end.** After the recommendations, the skill asks if you want a workbook — Summary tab + one tab per property (full breakdown), saved to your Desktop. Say yes to see it; it's report-only and pushes nothing. (First time, it quietly sets up a small local `openpyxl` venv; if that can't install, it falls back to CSVs.)
 
 If the detection report is missing the PMS or pricing tool, **stop and fix it** (usually a skipped restart, or an MCP that didn't register) before declaring done.
 
