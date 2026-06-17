@@ -6,8 +6,7 @@ You don't need to be technical. You open Claude Code, drag this folder in, and s
 
 Everything you need is **already in this folder.** There's nothing to go grab from somewhere else, no other tool to install first, no separate download. One bundle, start to finish.
 
-> 📺 **Watch the Loom walkthrough first:** [Loom link]
-> It shows the whole thing end to end so you know what to expect before you start. Five minutes, worth it.
+> 📺 **Walkthrough video — coming shortly.** A five-minute Loom showing the whole thing end to end is on the way. You don't need it to start — `SETUP.md` is fully self-contained and walks you through every step.
 
 ---
 
@@ -128,7 +127,7 @@ It's your database, in your account. The data lives with you, not in this repo.
 
 ## How to use it
 
-1. **Watch the Loom** ([Loom link]) so you know the shape of the thing.
+1. **(Optional) Watch the walkthrough Loom** — coming shortly. The setup is self-contained, so you can start without it.
 2. **Put this folder somewhere easy to find** on your computer.
 3. **Open a fresh Claude Code session** with this folder open (or paste the contents of `SETUP.md` as your first message).
 4. **Say "set this up."**
@@ -206,7 +205,7 @@ git pull
 
 ## Want to actually learn this, not just run it?
 
-This whole thing came out of the **Solnest AI** community, where we teach business owners — STR operators especially — to wire AI into their business themselves instead of paying someone forever. If you want to go deeper, ask questions live, and stop setting your pricing tool and forgetting it, come hang out: **[Skool community link]**
+This whole thing came out of the **Solnest AI** community, where we teach business owners — STR operators especially — to wire AI into their business themselves instead of paying someone forever. If you want to go deeper, ask questions live, and stop setting your pricing tool and forgetting it, come hang out: **[skool.com/solnest-ai](https://www.skool.com/solnest-ai)**
 
 ---
 

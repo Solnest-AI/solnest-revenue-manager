@@ -1,15 +1,14 @@
 <!--
-  PUBLISHER NOTE — fill these TWO tokens before shipping this folder to operators:
-    1. [Loom link]             → the walkthrough video URL (top of this file). A dead link here is the FIRST thing an operator hits.
-    2. [Skool community link]  → the Solnest AI Skool invite (in the DONE message). Also appears once in README.md.
+  PUBLISHER NOTE — Skool link is filled. ONE token still to swap once recorded:
+    [Loom] → the walkthrough video URL (top of this file + README.md). Currently a soft "coming shortly"
+    placeholder so nothing looks broken on the public repo; replace it with the real Loom URL when ready.
   This is a self-contained folder: everything the operator needs is already inside it. There is NO external repo to fetch,
   NO suite to grab from, and NO personal tools/paths referenced anywhere. Keep it that way.
 -->
 
 # Revenue Manager — One-Shot Setup
 
-> **🎥 Watch the Loom first (5 min):** [Loom link]
-> It shows the whole flow end-to-end so the steps below feel familiar. Watch it, then come back here.
+> **🎥 Walkthrough video — coming shortly.** A 5-minute Loom showing the whole flow end-to-end is on the way. You don't need it to begin — the steps below are fully self-contained.
 
 Welcome 👋 This is the **single entry point** for setting up your STR Revenue Manager. It connects four things — your **PMS**, your **pricing tool (PriceLabs)**, a **Supabase audit database**, and the **Revenue Manager plugin** — then does a first run so you can see it working. You'll do this once, solo, before the event. Then at the event we help you actually *run* it on your real listings and tune it.
 
@@ -172,7 +171,7 @@ When it's time for that platform's API key, follow the [Credential handling cont
 ### Communication & behavior rules (follow exactly)
 
 - **One question per message.** Never stack questions. Wait for the reply.
-- **Reference the Loom** at the very start: point them to the video at the top of this file if they haven't watched it.
+- **Reference the walkthrough video** at the very start *if one is linked* at the top of this file — if it's still marked "coming shortly," just reassure them the steps are self-contained and proceed.
 - **Click-by-click for any credential.** When a key is needed, give exact navigation (which site, which menu, which button).
 - **Credentials NEVER touch the chat — open the file, verify by sourcing.** This is the whole contract, restated as the single behavioral rule. Full mechanics + the 3 sanity checks live in [Credential handling — never in the chat](#credential-handling--never-in-the-chat-the-3-sanity-checks); honor it for every connector:
   - You **never** ask the operator to paste a credential into the chat. You **create** the local, git-ignored `.env` (`cp .env.example .env`), **open** it for them, and they paste the value **into that file** and save. The value never enters the conversation and never enters tracked files.
@@ -612,7 +611,7 @@ Once all four checkpoints pass, send the operator a wrap-up like this (warm, cas
 >
 > **To update later:** grab the latest version of this folder when one's shared, drop it in, reinstall the plugin, and restart Claude Code. Your keys live in your local `.env` files and never need to move — just never `git add` a `.env`.
 >
-> 🙌 **Want to actually master this — not just run it?** This whole build came out of the **Solnest AI community**, where we teach STR operators to wire AI into their business themselves. If you want to go deeper, tune your strategy, and join the live calls, come hang out: **[Skool community link]**
+> 🙌 **Want to actually master this — not just run it?** This whole build came out of the **Solnest AI community**, where we teach STR operators to wire AI into their business themselves. If you want to go deeper, tune your strategy, and join the live calls, come hang out: **[skool.com/solnest-ai](https://www.skool.com/solnest-ai)**
 >
 > See you at the event — bring your real numbers and we'll tune it together. 🚀
 
