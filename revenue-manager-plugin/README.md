@@ -215,4 +215,4 @@ MIT.
 
 ---
 
-Want to actually learn this stuff — not just run it? This whole revenue-manager build came out of the Solnest AI community, where we teach operators to wire AI into their business themselves. If you're an STR operator who wants to stop setting PriceLabs and forgetting it, come hang out: [Skool community link]
+Want to actually learn this stuff — not just run it? This whole revenue-manager build came out of the Solnest AI community, where we teach operators to wire AI into their business themselves. If you're an STR operator who wants to stop setting PriceLabs and forgetting it, come hang out: [skool.com/solnest-ai](https://www.skool.com/solnest-ai)

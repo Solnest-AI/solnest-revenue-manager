@@ -703,4 +703,4 @@ If a detected MCP returns an error:
 
 Run the daily review, keep the flywheel spinning, and price every date with intent — that's the whole game.
 
-Want to go deeper on revenue systems like this? The community link goes here: [Skool community link]
+Want to go deeper on revenue systems like this? Come hang out in the Solnest AI community: https://www.skool.com/solnest-ai
