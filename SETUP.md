@@ -102,13 +102,13 @@ You are the **lead setup engineer** for the Revenue Manager. The person who just
 SETUP.md                  ← this file (the conductor)
 README.md                 ← folder landing page
 build-pms-mcp.md          ← PMS connector flow (used in Phase 1 only for build-from-research PMSs)
-build-pricing-ops-mcp.md  ← pricing + ops connector flow (Phase 2 + Phase 5 ops)
+build-pricing-ops-mcp.md  ← pricing + ops connector flow (Phase 2 + Phase 4 ops)
 mcp-servers/              ← 5 pre-built, credential-free connectors (source only — no keys inside)
     hospitable/   (Node/TS)  — PMS
     pricelabs/    (Node/TS)  — pricing
-    turno/        (Python)   — ops (optional, Phase 5)
-    rankbreeze/   (Python)   — ranking (optional, Phase 5)
-    airroi/       (Python)   — named-competitor comps (optional, Phase 5)
+    turno/        (Python)   — ops (optional, Phase 4)
+    rankbreeze/   (Python)   — ranking (optional, Phase 4)
+    airroi/       (Python)   — named-competitor comps (optional, Phase 4)
 references/               ← API reference docs; you CREATE this folder when you build a connector from research
 revenue-manager-plugin/   ← the plugin: the skill + migrations 001/002 + reference docs
     migrations/001_revenue_tables.sql
@@ -126,9 +126,9 @@ Some platforms ship **pre-built** in `mcp-servers/`. Others you **build fresh** 
 |---|---|---|---|
 | PMS | **Hospitable** | `mcp-servers/hospitable/` | Node/TS |
 | Pricing | **PriceLabs** | `mcp-servers/pricelabs/` | Node/TS |
-| Ops (Phase 5) | **Turno** | `mcp-servers/turno/` | Python (uv, **3.11+**) |
-| Ranking (Phase 5) | **RankBreeze** | `mcp-servers/rankbreeze/` | Python (venv) |
-| Comps (Phase 5) | **AirROI** | `mcp-servers/airroi/` | Python (venv) |
+| Ops (Phase 4) | **Turno** | `mcp-servers/turno/` | Python (uv, **3.11+**) |
+| Ranking (Phase 4) | **RankBreeze** | `mcp-servers/rankbreeze/` | Python (venv) |
+| Comps (Phase 4) | **AirROI** | `mcp-servers/airroi/` | Python (venv) |
 
 **Generic setup for any pre-built server:**
 1. `cd mcp-servers/<name>`
@@ -182,7 +182,7 @@ When it's time for that platform's API key, follow the [Credential handling cont
 - **Verify before moving on.** Every step has a checkpoint. Do not advance until the checkpoint passes.
 - **Fix errors yourself.** If something fails, diagnose and repair it — don't dump a stack trace on the operator and ask them to debug. Only escalate when you genuinely need a credential or a decision (e.g., "your plan doesn't include API access, here's who to email"). A credential that won't verify is fixed by re-opening the file and rechecking the line — **never** by asking for a chat paste.
 - **Use absolute paths when registering MCPs.** `claude mcp add` needs an absolute path to the interpreter/entry file. Resolve the bundle's absolute path once (from `cwd`) and reuse it.
-- **Don't skip ahead.** The phases are ordered for a reason: pricing benefits from the PMS, Supabase is required before the plugin's first run, and the plugin needs all three.
+- **Don't skip ahead.** The phases are ordered for a reason: pricing benefits from the PMS, Supabase is required before the plugin's first run, and the **enrichment add-ons (Phase 4) are offered before the plugin (Phase 5)** so the very first "check my pricing" already includes any the operator connected. **Ask about all three add-ons every run** even though they're optional — don't jump from Supabase straight to the plugin.
 - **Restart reminders matter.** MCPs only load on a **full restart** of Claude Code (fully quit and reopen — not a reload). Remind the operator at every point where a restart is required, and confirm the new tools are visible after.
 
 ### Phase map (run in this order)
@@ -193,8 +193,8 @@ When it's time for that platform's API key, follow the [Credential handling cont
 | **1** | Connect the PMS | Pre-built `mcp-servers/hospitable/` **or** build-from-research via `build-pms-mcp.md` |
 | **2** | Connect the pricing tool (PriceLabs) | Pre-built `mcp-servers/pricelabs/` **or** build-from-research via `build-pricing-ops-mcp.md` |
 | **3** | Set up Supabase + run both migrations | (this file + plugin `migrations/`) |
-| **4** | Install the plugin + first run | (this file + `revenue-manager-plugin/`) |
-| **5** *(optional)* | Enrichment — Turno, RankBreeze, AirROI (bundled) · Breezeway/Operto (built) | `mcp-servers/*` · `build-pricing-ops-mcp.md` |
+| **4** | Offer enrichment add-ons — **ask about each, every run** (optional/skippable): RankBreeze, Turno, AirROI (bundled) · Breezeway/Operto (built) | `mcp-servers/*` · `build-pricing-ops-mcp.md` |
+| **5** | Install the plugin + first run | (this file + `revenue-manager-plugin/`) |
 
 ---
 
@@ -224,7 +224,7 @@ Run `node -v`. Need **18+**.
 - If 18+ → ✅, say so and move on.
 - If missing or older → walk them to https://nodejs.org/ to install the **LTS** version, then re-check. Don't proceed until `node -v` reports 18+. (The Hospitable and PriceLabs connectors are Node, so this is required for the core path.)
 
-> **Note on Python (only if needed later):** the core path (Hospitable + PriceLabs) is Node-only — no Python required. Some **optional Phase 5 add-ons are Python**, and **Turno specifically needs Python 3.11+** (its `pyproject.toml` declares `requires-python >=3.11`). RankBreeze and AirROI are fine on 3.10+. Don't make them install Python now; just check `python3 --version` at the moment they opt into a Python add-on, and if they pick Turno on exactly 3.10, walk them to install 3.11+ (https://www.python.org/downloads/) before building it — otherwise `uv sync` / `pip` will refuse or mis-resolve.
+> **Note on Python (only if needed later):** the core path (Hospitable + PriceLabs) is Node-only — no Python required. Some **optional Phase 4 add-ons are Python**, and **Turno specifically needs Python 3.11+** (its `pyproject.toml` declares `requires-python >=3.11`). RankBreeze and AirROI are fine on 3.10+. Don't make them install Python now; just check `python3 --version` at the moment they opt into a Python add-on, and if they pick Turno on exactly 3.10, walk them to install 3.11+ (https://www.python.org/downloads/) before building it — otherwise `uv sync` / `pip` will refuse or mis-resolve.
 
 **Step 0.3 — Protect secrets (quick pass).**
 
@@ -497,7 +497,36 @@ The MCP path is smoother and safer — **prefer it, and only fall here if the op
 
 ---
 
-### PHASE 4 — Install the plugin & first run
+### PHASE 4 — Offer the enrichment add-ons (ASK about each, every time — optional)
+
+**Goal:** the operator has been **explicitly offered all three bundled enrichment add-ons — RankBreeze, Turno, and AirROI — one at a time**, and connected the ones they want, BEFORE the plugin's first run (so the very first "check my pricing" already includes them). They are **optional**: the operator can skip any or all — but you must **ask about each one, every run.** Never silently skip the offer, and never skip straight to the plugin without going through these three.
+
+> Frame it: *"Before I install the Revenue Manager, let's hook up any extras you want — they make the report richer. I'll run through three quick ones; say yes to set one up, or skip to move on. All optional, and you can add any later."*
+
+**Ask about each of these three, in order, one at a time.** For each: name it, give the one-line value, and ask **"set it up now, or skip?"**
+- If **yes** → walk the full setup with the **same discipline as Phases 1–3**: read the bundled `README` / `.env.example`, `cp` the example file, **open** it for them, the operator pastes the value **into the file** (never the chat), run the 3 sanity checks (SAFE → FILLED → WORKS), register with absolute paths, and **full-restart** Claude Code.
+- If **skip** → acknowledge, note they can add it any time later (the skill auto-detects it on the next run), and move to the next one.
+
+**1️⃣ RankBreeze — ranking / visibility** *(pre-built)* — the visibility spoke of the flywheel (search rank + page-view signal); without it, ranking stays a manual check.
+`cd mcp-servers/rankbreeze` → `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`. **No API key** — auth is the `_godzilla_session` browser cookie in `session.txt`. Contract: `cp session.txt.example session.txt`, **open** it (`open -e session.txt` / `notepad session.txt` / `xdg-open session.txt`), the operator pastes the cookie value **into the file** (never the chat), save. 3 sanity checks (SAFE: `.gitignore` blocks `session.txt`; FILLED: `grep -q '.\+' session.txt`; WORKS: register + a real `health_check`/list call). Its README / `session.txt.example` says where to find the cookie. Register the venv interpreter pointed at `server.py`, restart.
+
+**2️⃣ Turno — cleaning / ops** *(pre-built, needs Python 3.11+)* — turnover-cost signal; flags margin leaks from too many 1-night stays.
+First check `python3 --version` is **3.11+** (Turno's `pyproject.toml` requires it). `cd mcp-servers/turno` → `uv sync` (or, no uv, `python3 -m venv .venv && .venv/bin/pip install -e .`). Contract: `cp .env.example .env`, **open** it, the operator pastes **into the file** — `TURNO_API_TOKEN` (the JWT starting `eyJ`) + `TURNO_PARTNER_ID` (the UUID), and keep `TURNO_ENV=sandbox`. **Turno's API is partner-gated** — if they don't have access yet, tell them to email `support@turno.com` to enable External API v2 and **skip for now** (they can add it later). 3 sanity checks (FILLED via `grep` per var; WORKS via `turno_check_connection`). Register: uv → `uv --directory <ABS>/mcp-servers/turno run turno-mcp`; pip-venv fallback → `<ABS>/mcp-servers/turno/.venv/bin/turno-mcp` (console script — Turno is a package, no top-level `server.py`). Restart.
+
+**3️⃣ AirROI — named-competitor comps** *(pre-built)* — named competitors a guest would actually compare, each with TTM revenue / ADR / occupancy / ratings, on top of PriceLabs' aggregate percentiles. **USD-only.**
+`cd mcp-servers/airroi` → `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`. Contract: `cp .env.example .env`, **open** it, the operator grabs a **free** key at **https://www.airroi.com/api/developer/activate** and pastes it **into the file** on `AIRROI_API_KEY=`, save. 3 sanity checks (FILLED via `grep`; WORKS via a real comp/list call). Register the venv interpreter pointed at `server.py`, restart.
+
+**Mention only if they ask, or if they use Breezeway/Operto instead of Turno:** Breezeway / Operto are **built fresh** from `build-pricing-ops-mcp.md` (you write the code — no external skill), credential via the same contract. Offer as the ops alternative for non-Turno operators.
+
+**AirROI currency note:** AirROI returns **USD only.** The skill's currency gate converts or clearly flags it for non-USD operators — a raw USD comp never drives a CAD/GBP/EUR price; if it can't convert, it flags-and-excludes. (RankBreeze and Turno have no currency issue.)
+
+After each add-on the operator connects: **full restart** of Claude Code, then confirm the new tools appear (e.g. `mcp__rankbreeze__*`, `mcp__turno__*`, `mcp__airroi__*`). The plugin's first run in Phase 5 then shows the new spoke in its detection report automatically.
+
+> **Checkpoint 4:** all three add-ons were **explicitly offered, one at a time** ✅ · each one the operator chose is set up via the credential contract + 3 sanity checks and its tools appear after a full restart ✅ · skipped ones acknowledged (operator knows they can add later) ✅.
+
+---
+
+### PHASE 5 — Install the plugin & first run
 
 **Goal:** the Revenue Manager plugin installed, configured for their properties, and a successful recommend-only first run.
 
@@ -561,45 +590,20 @@ If the detection report is missing the PMS or pricing tool, **stop and fix it** 
 
 > **If Supabase shows "not connected" on this first run even though Phase 3 passed:** this is almost always a **detection-prefix gap, not a setup failure.** The plugin's own first-run check currently looks specifically for the `mcp__supabase__*` flavor; if you connected Supabase under a *scoped or Claude-connector* prefix (e.g. `mcp__supabase-jarvis__*` or `mcp__claude_ai_Supabase__*`), the plugin may report it as missing even though the migrations ran fine and the tables exist. Don't send the operator back to redo Phase 3. Confirm the 4 tables + 3 columns are really there (a quick `list_tables` / SELECT on the connected server), tell the operator the audit DB is good, and — if they want the plugin to auto-detect it cleanly every run — either register Supabase under the plain `supabase` name or note it as a known prefix-matching quirk. Only treat it as a real failure if the tables genuinely don't exist.
 
-> **Checkpoint 4:** Plugin installed + restarted ✅ · property config set (floors/ceilings auto-read, markup captured, max-delta 25%) ✅ · "check my pricing" produced a recommend-only report with the safety layer and **no** auto-write ✅. (A Supabase "not connected" notice that turns out to be a prefix-detection quirk — tables actually present — counts as a pass.)
-
----
-
-### PHASE 5 — Optional enrichment add-ons (skippable)
-
-The core is done — the Revenue Manager runs great on **PMS + PriceLabs + Supabase** alone. These add-ons just make the report *richer*. The skill **auto-detects** each one and uses it if present, and silently skips it if not. **Tell the operator they can skip this entirely and add any of these later — the skill picks them up on the next run.** Offer them one at a time; never make any feel required.
-
-> Frame it: *"Your Revenue Manager is fully working. These are optional power-ups — want any, or skip for now? You can always add them later."*
-
-Three of these are **pre-built in this folder** (set them up locally, exactly like the core connectors — same [Credential handling contract](#credential-handling--never-in-the-chat-the-3-sanity-checks): open the file, paste into the file, run the 3 sanity checks). Two are **built fresh** from `build-pricing-ops-mcp.md`.
-
-| Add-on | What it adds | How to connect |
-|---|---|---|
-| **RankBreeze** (ranking/visibility) — *pre-built* | The visibility spoke of the flywheel — search rank + page-view signal. Without it, ranking stays a manual check. | `cd mcp-servers/rankbreeze` → `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`. No API key — auth is the `_godzilla_session` browser cookie, which lives in `session.txt`. Follow the contract: `cp session.txt.example session.txt`, **open** the file for them (`open -e session.txt` / `notepad session.txt` / `xdg-open session.txt`), and they paste the cookie value **into the file** (never the chat), then save. Run the 3 sanity checks (SAFE: `.gitignore` blocks `session.txt`; FILLED: `grep -q '.\+' session.txt`; WORKS: register + a real `health_check`/list call). Its README/`session.txt.example` says where to find the cookie. Register with the venv interpreter pointed at `server.py`, restart. |
-| **Turno** (cleaning/ops) — *pre-built, needs Python 3.11+* | Turnover-cost signal — flags margin leaks from too many 1-night stays. | First check `python3 --version` is **3.11+** (Turno's `pyproject.toml` requires it). Then `cd mcp-servers/turno` → `uv sync` (or, if no uv, `python3 -m venv .venv && .venv/bin/pip install -e .`). Add credentials the contract way: `cp .env.example .env`, **open** it for them, they paste **into the file** (never the chat) — `TURNO_API_TOKEN` + `TURNO_PARTNER_ID` + `TURNO_ENV`. Its `.env.example` explains Turno's confusing labels: the JWT that starts with `eyJ` is `TURNO_API_TOKEN`, the UUID is `TURNO_PARTNER_ID`; keep `TURNO_ENV=sandbox` until they're ready for production. Run the 3 sanity checks (FILLED via `grep` on each var, WORKS via `turno_check_connection`). Register: uv → `uv --directory <ABS>/mcp-servers/turno run turno-mcp`; pip-venv fallback → `<ABS>/mcp-servers/turno/.venv/bin/turno-mcp` (the console script — Turno is a package, there's no top-level `server.py`). Restart. |
-| **AirROI** (named-competitor comps) — *pre-built* | Named competitors a guest would actually compare — each with TTM revenue / ADR / occupancy / ratings, on top of PriceLabs' aggregate percentiles. **USD-only.** | `cd mcp-servers/airroi` → `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`. Add the key the contract way: `cp .env.example .env`, **open** it for them, they grab a **free** key from **https://www.airroi.com/api/developer/activate** and paste it **into the file** (never the chat) on `AIRROI_API_KEY=`, then save. Run the 3 sanity checks (FILLED via `grep`, WORKS via a real comp/list call). Register with the venv interpreter pointed at `server.py`, restart. |
-| **Breezeway / Operto** (cleaning/ops) — *built from research* | Same turnover-cost / ops signal for operators on Breezeway or Operto instead of Turno. | Read **`build-pricing-ops-mcp.md`** and pick your ops tool; build it fresh into `mcp-servers/<tool>/` the same way as the build-from-research connectors above (you write the code — no external skill). Its credential follows the contract: open the `.env`, operator pastes into the file, run the 3 sanity checks. |
-
-For each one the operator wants:
-1. Walk them through that tool's setup (read its bundled `README` / `.env.example`, or `build-pricing-ops-mcp.md` for Breezeway/Operto), one step at a time, verifying as you go — same discipline as Phases 1–4. **Every credential follows the contract: open the file, paste into the file (never the chat), run the 3 sanity checks (SAFE → FILLED → WORKS).**
-2. After a **full restart** of Claude Code, confirm the new tools appear (e.g. `mcp__rankbreeze__*`, `mcp__turno__*`, `mcp__airroi__*`).
-3. Re-run **"check my pricing"** and confirm the detection report now shows the new spoke (Ranking ✅ / Ops ✅ / Named comps ✅).
-
-**AirROI currency note:** AirROI returns **USD only**. The skill's currency gate converts or clearly flags it for non-USD operators — a raw USD comp never drives a CAD/GBP/EUR price; if it can't convert, it flags-and-excludes. (RankBreeze and Turno have no currency issue.)
-
-> **Checkpoint 5 (only if they added any):** the new tool(s) appear in the detection report and the next "check my pricing" uses them. If an add-on doesn't show up, it's almost always a missed full restart.
+> **Checkpoint 5:** Plugin installed + restarted ✅ · property config set (floors/ceilings auto-read, markup captured, max-delta 25%) ✅ · "check my pricing" produced a recommend-only report with the safety layer and **no** auto-write ✅. (A Supabase "not connected" notice that turns out to be a prefix-detection quirk — tables actually present — counts as a pass.)
 
 ---
 
 ### DONE — send this message (Solnest AI voice)
 
-Once all four checkpoints pass, send the operator a wrap-up like this (warm, casual, encouraging — adjust the specifics to what actually got connected):
+Once the core phases are done — PMS, pricing, Supabase, the Phase 4 add-on offer, and the plugin's first run — send the operator a wrap-up like this (warm, casual, encouraging — adjust the specifics to what actually got connected):
 
 > 🎉 **That's it — your Revenue Manager is live.** Honestly, that's freaking awesome. Here's what you just wired up:
 >
 > - ✅ **<PMS name>** — your real bookings + calendar, straight into Claude
 > - ✅ **<PriceLabs / Wheelhouse / Beyond>** — your pricing engine + comp data
 > - ✅ **Supabase** — your audit database (4 tables, all set), so every run builds on the last one
+> - ✅ **Any enrichment add-ons you connected** (RankBreeze · Turno · AirROI) — folded into every report automatically (skipped any? add them anytime later)
 > - ✅ **The Revenue Manager plugin** — tested with a real "check my pricing" run
 >
 > **The deal — and this is the important part:** it's **recommend-only.** It tells you exactly where you're leaving money on the table, shows you the comps, the floor/ceiling, the currency, and how fresh the data is — and then **you approve every single change.** Nothing gets pushed to PriceLabs or your PMS silently, ever. You're always in the driver's seat.
@@ -626,8 +630,8 @@ Once all four checkpoints pass, send the operator a wrap-up like this (warm, cas
 | 1 | Your PMS | Hospitable: re-run the `mcp-servers/hospitable` build · others: re-run `build-pms-mcp.md` |
 | 2 | PriceLabs (pricing) | PriceLabs: re-run the `mcp-servers/pricelabs` build · others: re-run `build-pricing-ops-mcp.md` |
 | 3 | Supabase audit DB | Re-check the MCP + re-run both migrations |
-| 4 | Revenue Manager plugin | Reinstall plugin, **fully restart** Claude Code |
-| 5 *(optional)* | Enrichment: RankBreeze · Turno · AirROI · Breezeway/Operto | Re-add the tool, fully restart |
+| 4 *(optional — always offered)* | Enrichment: RankBreeze · Turno · AirROI · Breezeway/Operto | Re-add the tool, fully restart |
+| 5 | Revenue Manager plugin | Reinstall plugin, **fully restart** Claude Code |
 
 **Three golden rules:** your keys go into a local `.env` / `session.txt` that Claude opens for you — **you paste into the file, never into the chat** — and they never get committed (never `git add` a `.env`) · always **fully restart** Claude Code after adding an MCP or the plugin · it **recommends, you approve** — nothing pushes on its own.
 
