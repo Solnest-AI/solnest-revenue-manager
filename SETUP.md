@@ -163,7 +163,7 @@ These platforms have **no** pre-built server: PMS = Hostaway, Guesty (Pro + For 
 
 1. **RESEARCH** the platform's live API docs (WebSearch + WebFetch), seeded by the **verified API reference table already embedded in that build file** (base URL, auth header, where the key lives). That table is your offline starting point — trust it, then confirm against the live docs.
 2. **WRITE** a full API reference doc to `references/<platform>.md` (create the root `references/` folder if it doesn't exist yet) — endpoints, auth, params, pagination, rate limits.
-3. **BUILD** a fresh MCP server into `mcp-servers/<platform>/`, matching the bundled examples: stdio transport, key read from a local `.env`, HTTP errors wrapped with status + body, exponential backoff on 429, a smoke test, a `.env.example`, and a `.gitignore`. **You write the code yourself**, directly from the reference doc — do not invoke any external skill or tool to generate it. (The build files spell out the same instruction — if either of them still says to "invoke a skill," ignore that line and write the code by hand from the reference.)
+3. **BUILD** a fresh MCP server into `mcp-servers/<platform>/`, matching the bundled examples: stdio transport, key read from a local `.env`, HTTP errors wrapped with status + body, exponential backoff on 429, a smoke test, a `.env.example` (ship it with **empty** placeholder values — e.g. `THE_KEY=`, never `THE_KEY=your_key_here` — so the FILLED sanity check actually means "they pasted it"), and a `.gitignore`. **You write the code yourself**, directly from the reference doc — do not invoke any external skill or tool to generate it. (The build files spell out the same instruction — if either of them still says to "invoke a skill," ignore that line and write the code by hand from the reference.)
 4. **FIRST-RUN DISCOVERY:** on the first successful connect, probe every reachable READ/LIST endpoint and record the actual available endpoints + response shapes into `references/<platform>-discovery.md` (or append to `references/<platform>.md`). On every future run, **read that file instead of re-hunting the docs.** Make this persistent — it's how the connector stays fast and correct over time.
 
 When it's time for that platform's API key, follow the [Credential handling contract](#credential-handling--never-in-the-chat-the-3-sanity-checks) exactly — open the `.env`, operator pastes into the file, run the 3 sanity checks. Register, restart, and verify exactly like a pre-built server (step 4–5 above), pointing at the entry file you just wrote.
@@ -532,7 +532,7 @@ After each add-on the operator connects: **full restart** of Claude Code, then c
 
 > **Reminder:** the plugin installs from the **local folder** at `<BUNDLE_ROOT>/revenue-manager-plugin`. It's already on disk (Phase 0 confirmed it), so this is straightforward.
 
-**Step 4.1 — Install the plugin.**
+**Step 5.1 — Install the plugin.**
 
 Two ways — pick whichever fits:
 
@@ -546,13 +546,13 @@ Copy the `revenue-manager-plugin` folder into the Claude Code plugins directory:
 - **Mac/Linux:** `~/.claude/plugins/`
 - **Windows:** `%USERPROFILE%\.claude\plugins\`
 
-**Step 4.2 — Restart reminder.**
+**Step 5.2 — Restart reminder.**
 
 > 🔁 One more time — **fully quit and reopen Claude Code** so the plugin loads. Then come back and say "plugin installed, continue."
 
 After restart, confirm the **revenue-manager** skill is available (it should trigger on pricing/revenue talk).
 
-**Step 4.3 — First-run property config.**
+**Step 5.3 — First-run property config.**
 
 Now configure each property so the skill can tell real markup from price drift. Run the config pass and explain it plainly. Cover three things:
 
@@ -572,7 +572,7 @@ A clean way to kick this off (mirror the plugin's first-run line):
 
 > "Set up property config for all my listings. My PriceLabs markup is 16% (Airbnb 14% + 2% buffer)."
 
-**Step 4.4 — Test run: "check my pricing" (recommend-only).**
+**Step 5.4 — Test run: "check my pricing" (recommend-only).**
 
 Run a real, recommend-only pass. Have the operator say:
 

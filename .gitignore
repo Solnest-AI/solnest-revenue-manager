@@ -10,6 +10,12 @@ secrets.json
 *.key
 *.pem
 
+# Re-include the safe example templates (operators copy these to a local .env).
+# They carry only EMPTY placeholders — never real secrets — so they belong in the repo.
+# Without this, the `.env.*` rule above silently drops every connector's .env.example.
+!.env.example
+!.env.*.example
+
 # ── Node / MCP connector build artifacts ──────────────────────
 node_modules/
 npm-debug.log*
