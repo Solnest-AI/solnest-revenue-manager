@@ -101,15 +101,15 @@ All values verified against primary sources. This table is your **offline seed**
 
 | PMS | Base URL | Auth Header | Key Location |
 |---|---|---|---|
-| Hostaway | `https://api.hostaway.com/v1/` | `Authorization: Bearer <OAuth2 token>` | Dashboard → Settings → Hostaway API (Account ID + Secret) |
-| Guesty Open API (Pro) | `https://open-api.guesty.com/v1/` | `Authorization: Bearer <OAuth2 token>` | Integrations → API & Webhooks → New Application |
-| Guesty For Hosts | `https://api.guestyforhosts.com/` (verify in docs before coding) | API Key (per docs) | Account → API Keys |
-| Hostfully | `https://api.hostfully.com/api/v3/` | `X-HOSTFULLY-APIKEY: <key>` + `agencyUid` query on every request | Agency Settings page — key + Agency UID (bottom of page) |
+| Hostaway | `https://api.hostaway.com/v1/` | `Authorization: Bearer <token>` — **OAuth2 exchange first:** `POST /v1/accessTokens` (`grant_type=client_credentials`, `client_id`=Account ID, `client_secret`=API Key, `scope=general`); **cache the token** (limits ~15 req/10s per IP, 20/10s per account) | Settings → Hostaway API → **Create** (must pick a Partner — use "Hostaway Public API"); Account ID + API Key shown **once** |
+| Guesty Open API (Pro) | `https://open-api.guesty.com/v1/` | `Authorization: Bearer <token>` — **OAuth2 exchange:** `POST /oauth2/token` **form-urlencoded** (`grant_type=client_credentials`, `scope=open-api`); token TTL 24h, **max 5 tokens / clientId / 24h → MUST cache & reuse** | Integrations → API & Webhooks → New Application (Pro / paid tier; secret shown once) |
+| Guesty For Hosts | `https://api.guestyforhosts.com/external/v1/` | **Static, TWO headers (not OAuth):** `Authorization: Basic <user token>` **+** `x-porter-api-key: <key>` | Obtained **inside the Guesty For Hosts app** (no public dashboard path; may need support) |
+| Hostfully | `https://api.hostfully.com/api/v3.3/` (pin the minor — v3.3 is current; v3.x is per-account) | `X-HOSTFULLY-APIKEY: <key>` — `agencyUid` is a **query param on agency-scoped *list* endpoints only** (properties, leads), **NOT** on every request and **NOT** an auth field | Agency Settings (`platform.hostfully.com` → Agency Settings); needs API access on the plan |
 | Hospitable | `https://public.api.hospitable.com/v2/` | `Authorization: Bearer <PAT>` | Account → API Access → Personal Access Tokens |
-| OwnerRez | `https://api.ownerrez.com/v2/` | HTTP Basic (email + `pt_` token) + `User-Agent: <App>/1.0 (c_xxx)` header | Settings → Advanced Tools → Developer/API Settings |
-| Lodgify | `https://api.lodgify.com/v2/` | `X-ApiKey: <key>` | Settings → Public API |
-| Uplisting | `https://connect.uplisting.io/` | `Authorization: Basic <base64(api_key)>` | Dashboard → Connect → API |
-| Smoobu | `https://login.smoobu.com/api/` | `Api-Key: <key>` | Settings → Advanced → API Keys |
+| OwnerRez | `https://api.ownerrez.com/v2/` | HTTP Basic (account email + `pt_` PAT) **+ required** `User-Agent: <YourApp>/1.0` (any descriptive string — the `(c_xxx)` form is only for OAuth apps) | Settings → Advanced Tools → Developer/API Settings (self-serve PAT, shown once). ⚠️ no GET for nightly rates — read occupancy from `bookings`, write rates via `PATCH /v2/spotrates` |
+| Lodgify | `https://api.lodgify.com` — **no fixed version prefix; v1 and v2 coexist per-path** (rate *writes* are v1-only) | `X-ApiKey: <key>` | Settings → Public API |
+| Uplisting | `https://connect.uplisting.io` (no global version; a few `/v2/` endpoints) | `Authorization: Basic <base64(raw api_key)>` (encode the key alone — no `key:` colon) + `Content-Type: application/json` | Dashboard → Connect → API (`app.uplisting.io/connect/api`, as Account Owner). Docs = Postman collection (no `developer.uplisting.io`) |
+| Smoobu | `https://login.smoobu.com` — **host only** (most paths `/api/...`; availability is `/booking/...`, OAuth `/oauth/...`) | `Api-Key: <key>` | Settings → Advanced → API Keys (**paid Professional plan required**) |
 
 ---
 
@@ -299,8 +299,8 @@ Send the block matching their PMS. This step is **orientation only** — it tell
 >    - **Account ID** (the `client_id`)
 >    - **API Secret Key** (the `client_secret`) — only shown once, so keep that tab open until I've got the file ready for you.
 
-**Env vars:** `HOSTAWAY_ACCOUNT_ID`, `HOSTAWAY_API_SECRET`.
-**Verify (Sanity Check 3, you run it by sourcing `.env`):** POST to `https://api.hostaway.com/v1/accessTokens` with form body `grant_type=client_credentials&client_id=$HOSTAWAY_ACCOUNT_ID&client_secret=$HOSTAWAY_API_SECRET&scope=general`. 200 + `access_token` = ✅.
+**Env vars:** `HOSTAWAY_ACCOUNT_ID`, `HOSTAWAY_API_KEY`.
+**Verify (Sanity Check 3, you run it by sourcing `.env`):** POST to `https://api.hostaway.com/v1/accessTokens` with form body `grant_type=client_credentials&client_id=$HOSTAWAY_ACCOUNT_ID&client_secret=$HOSTAWAY_API_KEY&scope=general`. 200 + `access_token` = ✅.
 
 ---
 
@@ -323,16 +323,18 @@ Send the block matching their PMS. This step is **orientation only** — it tell
 
 ##### 🅱️² GUESTY FOR HOSTS
 
-> Let's find your Guesty For Hosts API key (you'll paste it into a local file shortly — not here).
+> Let's find your Guesty For Hosts credentials — this one needs **two values**, both go into a local file (not here).
 >
-> 1. Log into **https://app.guestyforhosts.com/** → click your profile → **Account**.
-> 2. Scroll to **API Keys** (may be under Integrations/Developer).
-> 3. Click **Generate new key** → name it "Claude MCP" → keep it on screen until I've got the file ready.
->
-> If API Keys isn't visible, it's plan-gated — contact Guesty For Hosts support.
+> 1. Log into the **Guesty For Hosts app** — credentials are obtained inside the app itself. Look for an API, Integrations, or Developer section in your account settings.
+> 2. If you can't find it, contact Guesty For Hosts support — there is no confirmed public dashboard path for key generation.
+> 3. You'll need **two values** once you locate them:
+>    - **Basic Token** (used as `Authorization: Basic <token>`)
+>    - **Porter API Key** (used as the `x-porter-api-key` header)
+> 4. Keep both on screen until I've got the file ready.
 
-**Env var:** `GUESTY_FOR_HOSTS_API_KEY`.
-**Verify (Sanity Check 3, you run it by sourcing `.env`):** fetch the docs at `https://apidocs.guestyforhosts.com/` to confirm the current auth method, then test a listings endpoint with the key sourced from `.env`.
+**Env vars:** `GUESTY_FOR_HOSTS_BASIC_TOKEN`, `GUESTY_FOR_HOSTS_PORTER_KEY`.
+**Auth:** Static, two headers (not OAuth) — `Authorization: Basic $GUESTY_FOR_HOSTS_BASIC_TOKEN` + `x-porter-api-key: $GUESTY_FOR_HOSTS_PORTER_KEY`.
+**Verify (Sanity Check 3, you run it by sourcing `.env`):** `curl -sS -H "Authorization: Basic $GUESTY_FOR_HOSTS_BASIC_TOKEN" -H "x-porter-api-key: $GUESTY_FOR_HOSTS_PORTER_KEY" "https://api.guestyforhosts.com/external/v1/rates?listing_id=<a_known_listing_id>"` → 200 = ✅. (Substitute a real listing_id from the app — no generic smoke endpoint is documented.)
 
 ---
 
@@ -348,7 +350,7 @@ Send the block matching their PMS. This step is **orientation only** — it tell
 > If API access isn't visible, it's a paid add-on — email `api@hostfully.com`.
 
 **Env vars:** `HOSTFULLY_API_KEY`, `HOSTFULLY_AGENCY_UID`.
-**Verify (Sanity Check 3, you run it by sourcing `.env`):** `curl -sS -H "X-HOSTFULLY-APIKEY: $HOSTFULLY_API_KEY" "https://api.hostfully.com/api/v3/properties?agencyUid=$HOSTFULLY_AGENCY_UID&limit=1"` → 200 = ✅.
+**Verify (Sanity Check 3, you run it by sourcing `.env`):** `curl -sS -H "X-HOSTFULLY-APIKEY: $HOSTFULLY_API_KEY" "https://api.hostfully.com/api/v3.3/properties?agencyUid=$HOSTFULLY_AGENCY_UID&limit=1"` → 200 = ✅.
 
 ---
 
@@ -362,7 +364,7 @@ Send the block matching their PMS. This step is **orientation only** — it tell
 > 4. You'll also need your **login email** for this one (it's Basic auth: email + token).
 
 **Env vars:** `OWNERREZ_EMAIL`, `OWNERREZ_TOKEN`.
-**Verify (Sanity Check 3, you run it by sourcing `.env`):** `curl -sS -u "$OWNERREZ_EMAIL:$OWNERREZ_TOKEN" -H "User-Agent: Claude MCP/1.0 (claude-mcp)" "https://api.ownerrez.com/v2/properties"` → 200 = ✅.
+**Verify (Sanity Check 3, you run it by sourcing `.env`):** `curl -sS -u "$OWNERREZ_EMAIL:$OWNERREZ_TOKEN" -H "User-Agent: RevenueManager/1.0" "https://api.ownerrez.com/v2/users/me"` → 200 = ✅.
 
 ---
 
@@ -376,7 +378,7 @@ Send the block matching their PMS. This step is **orientation only** — it tell
 >    - Plan-gated — if access is blocked, contact Lodgify support.
 
 **Env var:** `LODGIFY_API_KEY`.
-**Verify (Sanity Check 3, you run it by sourcing `.env`):** `curl -sS -H "X-ApiKey: $LODGIFY_API_KEY" "https://api.lodgify.com/v2/properties"` → 200 = ✅.
+**Verify (Sanity Check 3, you run it by sourcing `.env`):** `curl -sS -H "X-ApiKey: $LODGIFY_API_KEY" "https://api.lodgify.com/v1/properties"` → 200 = ✅.
 
 ---
 
@@ -415,7 +417,7 @@ For the PMS the operator chose, research the live docs with `WebSearch` + `WebFe
 - **Hostaway** → `https://api.hostaway.com/documentation` (token exchange via `/accessTokens`, then Bearer)
 - **Guesty Pro** → `https://open-api-docs.guesty.com/` (OAuth2 token at `/oauth2/token`, 5-tokens/24h cap)
 - **Guesty For Hosts** → `https://apidocs.guestyforhosts.com/` (confirm base URL + auth — verify before coding)
-- **Hostfully** → `https://dev.hostfully.com/reference/` (Hostfully calls reservations "leads"; `agencyUid` required on every request)
+- **Hostfully** → `https://dev.hostfully.com/reference/` (current version **v3.3**; Hostfully calls reservations "leads"; `agencyUid` is a query param on *list* endpoints only — properties/leads — not every request; read+write nightly rates via `pricing-periods`)
 - **OwnerRez** → `https://www.ownerrez.com/support/articles/api-overview` (Basic auth + required `User-Agent` header)
 - **Lodgify** → `https://docs.lodgify.com/`
 - **Uplisting** → `https://support.uplisting.io/docs/api` and the full Postman collection at `https://documenter.getpostman.com/view/1320372/SWTBfdW6`
@@ -463,39 +465,49 @@ If you'd rather use Python, **mirror the `mcp-servers/airroi/` server exactly** 
 **Per-PMS build briefs** (endpoints to wrap — confirm every path against the live docs from Step B1 as you code). In each list, the **writes are confirmation-gated**, the rest are reads:
 
 ###### Hostaway
-- Base URL `https://api.hostaway.com/v1/` · Env: `HOSTAWAY_ACCOUNT_ID`, `HOSTAWAY_API_SECRET`
-- Exchange via POST `/accessTokens`; cache token (long-lived).
+- Base URL `https://api.hostaway.com/v1/` · Env: `HOSTAWAY_ACCOUNT_ID`, `HOSTAWAY_API_KEY`
+- Exchange via POST `/v1/accessTokens` form-urlencoded (`grant_type=client_credentials&client_id=<Account ID>&client_secret=<API Key>&scope=general`); cache the Bearer token (wait ~1s after issuance; limits 15 req/10s per IP, 20/10s per account → exponential back-off on 429). Use `includeResources=1` for nested objects.
 - Read tools: `list_listings`, `get_listing`, `list_reservations`, `get_reservation`, `list_guests`, `get_calendar`, `list_conversations`, `list_tasks`
 - Write tools (gate with `confirm=true`): `create_reservation`, `update_reservation`, `update_calendar`, `send_message`
 
 ###### Guesty Pro
 - Base URL `https://open-api.guesty.com/v1/`; token URL `https://open-api.guesty.com/oauth2/token` · Env: `GUESTY_CLIENT_ID`, `GUESTY_CLIENT_SECRET`
-- Token cap 5/24h — cache aggressively, don't re-fetch needlessly.
+- OAuth2 token exchange: `POST /oauth2/token` FORM-URLENCODED `grant_type=client_credentials&scope=open-api&client_id=&client_secret=`; token TTL 24h. **MAX 5 tokens/clientId/24h → MUST cache & reuse** — do not re-fetch unless expired. Limits: 15/s, 120/min, 5000/hr.
 - Read tools: `list_listings`, `get_listing`, `list_reservations`, `get_reservation`, `list_guests`, `get_calendar`, `list_conversations`, `list_tasks`
 - Write tools (gate with `confirm=true`): `update_calendar`, `send_message`
 
 ###### Guesty For Hosts
-- Base URL + endpoints from `https://apidocs.guestyforhosts.com/` — confirm before coding · Env: `GUESTY_FOR_HOSTS_API_KEY`
-- Tools: mirror the Guesty Pro tool set (same read/write split), adapted to whatever the For Hosts API actually exposes.
+- Base URL `https://api.guestyforhosts.com/external/v1/` · Env: `GUESTY_FOR_HOSTS_BASIC_TOKEN`, `GUESTY_FOR_HOSTS_PORTER_KEY`
+- Auth: **static, two headers** (NOT OAuth) — `Authorization: Basic <GUESTY_FOR_HOSTS_BASIC_TOKEN>` + `x-porter-api-key: <GUESTY_FOR_HOSTS_PORTER_KEY>` — send both on every request.
+- Endpoints (snake_case): list `GET /listings/getAll`; rates read `GET /rates?listing_id&start_date&end_date`; reservations `GET /reservation/listFor/{listing_id}/{start}/{end}`; WRITE rates `POST /rates` body `{listing_id, data:[{price,date,min_stay}]}`.
+- No documented pagination or rate limits — build defensively (exponential back-off, page defensively on list calls). Confirm all paths against live docs at `https://apidocs.guestyforhosts.com/` before coding.
+- Read tools: `list_listings`, `get_listing`, `get_rates`, `list_reservations`
+- Write tools (gate with `confirm=true`): `update_rates`
 
 ###### Hostfully
-- Base URL `https://api.hostfully.com/api/v3/` · Env: `HOSTFULLY_API_KEY`, `HOSTFULLY_AGENCY_UID`
-- Header `X-HOSTFULLY-APIKEY` + **auto-append** `agencyUid` on every request.
+- Base URL `https://api.hostfully.com/api/v3.3/` (pin the minor — v3.3 is current) · Env: `HOSTFULLY_API_KEY`, `HOSTFULLY_AGENCY_UID`
+- Header `X-HOSTFULLY-APIKEY` on every request. `agencyUid` is a **query param on list endpoints only** (properties, leads) — NOT on every request, NOT an auth field.
+- Everything is UID-based (opaque strings). Limit 10k/hr.
+- Endpoints: `GET /agencies` (discover agencyUid); list `GET /properties?agencyUid=`; calendar `GET /property-calendar/{propertyUid}?from&to`; rates read `GET /pricing-periods?propertyUid&from&to`; reservations `GET /leads?propertyUid|agencyUid`; WRITE rates `POST /pricing-periods` `{operation:"SET", pricingPeriod:{propertyUid, startDate, endDate, amount, minimumStay}}` (confirm the exact `amount` field key against sandbox before shipping writes).
 - Note: Hostfully calls reservations **"leads."**
-- Read tools: `list_properties`, `get_property`, `list_leads`, `get_lead`, `list_guests`, `get_calendar`, `list_messages`
-- Write tools (gate with `confirm=true`): `create_lead`, `update_lead_status`, `block_dates`, `send_message`
+- Read tools: `list_properties`, `get_property`, `list_leads`, `get_lead`, `get_calendar`, `get_pricing_periods`
+- Write tools (gate with `confirm=true`): `set_pricing_period`, `create_lead`, `update_lead_status`, `block_dates`
 
 ###### OwnerRez
 - Base URL `https://api.ownerrez.com/v2/` · Env: `OWNERREZ_EMAIL`, `OWNERREZ_TOKEN`
-- HTTP Basic auth + **required** `User-Agent` header on every request.
-- Read tools: `list_properties`, `get_property`, `list_bookings`, `get_booking`, `list_guests`, `list_messages`, `list_tags`, `property_availability`
-- Write tools (gate with `confirm=true`): `create_booking`, `send_message`
+- HTTP Basic auth (account email + `pt_` PAT) + **required** `User-Agent` header on every request — any descriptive string like `RevenueManager/1.0` is sufficient; the `(c_xxx)` client-id form is for OAuth apps only, do NOT tell PAT users they need it.
+- Limits: 300 req/5min per IP; a PAT may touch only 2 accounts per IP per 24h.
+- Endpoints: list `GET /v2/properties`; reservations `GET /v2/bookings` (REQUIRES `property_ids` OR `since_utc`); WRITE rates `PATCH /v2/spotrates` (array of `{property_id,date,amount,currency}` — `currency` is MANDATORY and must match the property).
+- ⚠️ There is **NO GET for nightly rates** in the PAT API — read occupancy/calendar from `bookings`, treat spotrates as write-only.
+- Read tools: `list_properties`, `get_property`, `list_bookings`, `get_booking`
+- Write tools (gate with `confirm=true`): `update_spotrates` (direct price-push — preview the exact per-date rate change and require approval; include `currency` from the property), `send_message`
 
 ###### Lodgify
-- Base URL `https://api.lodgify.com/v2/` · Env: `LODGIFY_API_KEY`
-- Header `X-ApiKey: <key>`.
-- Read tools: `list_properties`, `get_property`, `list_bookings`, `get_booking`, `list_quotes`, `list_messages`, `get_calendar`, `get_availability`
-- Write tools (gate with `confirm=true`): `update_rates` (this is a direct price-push — preview the exact rate change and require approval before it fires)
+- Base URL `https://api.lodgify.com` — **no fixed version prefix; v1 and v2 coexist per-path** (rate writes are v1-only) · Env: `LODGIFY_API_KEY`
+- Header `X-ApiKey: <key>`. Limits: v1 600/min, v2 750/min.
+- Endpoints: list `GET /v1/properties` (gives `property_id`/`houseId` + `room_type_id`); rates read `GET /v2/rates/calendar?houseId&roomTypeId&startDate&endDate` (dates inclusive); availability `GET /v2/availability/{propertyId}`; bookings `GET /v2/reservations/bookings?stayFilter&page&size`; WRITE rates `POST /v1/rates/savewithoutavailability` (body: property_id, room_type_id, rates[] with price_per_day/min_stay; **end_date is EXCLUSIVE**).
+- Read tools: `list_properties`, `get_property`, `list_bookings`, `get_booking`, `get_rates_calendar`, `get_availability`
+- Write tools (gate with `confirm=true`): `update_rates` (direct price-push — preview the exact rate change and require approval before it fires)
 
 ###### Uplisting
 - Base URL `https://connect.uplisting.io/` · Env: `UPLISTING_API_KEY`
@@ -504,11 +516,12 @@ If you'd rather use Python, **mirror the `mcp-servers/airroi/` server exactly** 
 - Write tools (gate with `confirm=true`): `update_calendar`, `send_message`
 
 ###### Smoobu
-- Base URL `https://login.smoobu.com/api/` · Env: `SMOOBU_API_KEY`
-- Header `Api-Key: <key>`.
+- Base URL `https://login.smoobu.com` — **host only** (most paths `/api/...`; availability is `/booking/...`, OAuth `/oauth/...` — do NOT hardcode `/api/` as the base) · Env: `SMOOBU_API_KEY`
+- Header `Api-Key: <key>`. Limit 1000/min (X-RateLimit-* headers). Validation errors often return HTTP 500 with a `detail` message — parse it.
+- Endpoints: list `GET /api/apartments`; rates read `GET /api/rates?apartments[]={id}&start_date&end_date` (all three params mandatory, apartments as array); reservations `GET /api/reservations`; WRITE rates `POST /api/rates` body `{apartments:[ids], operations:[{dates:["YYYY-MM-DD" or "YYYY-MM-DD:YYYY-MM-DD"], daily_price, min_length_of_stay}]}` (can't set min-stay alone on a date with no price).
 - Note: Smoobu calls properties **"apartments."**
-- Read tools: `list_apartments`, `get_apartment`, `list_reservations`, `get_reservation`, `list_guests`, `get_calendar`, `list_messages`
-- Write tools (gate with `confirm=true`): `update_rates` (direct price-push — preview + approval required), `send_message`
+- Read tools: `list_apartments`, `get_apartment`, `list_reservations`, `get_reservation`, `get_rates`
+- Write tools (gate with `confirm=true`): `update_rates` (direct price-push — preview + approval required)
 
 **After you finish writing the code — now run the credential contract:**
 
@@ -533,12 +546,12 @@ If you'd rather use Python, **mirror the `mcp-servers/airroi/` server exactly** 
    ```
    If the open command fails, give them the exact full path (`<BUNDLE_ROOT>/mcp-servers/<pms>/.env`) and tell them to open it in their text editor.
 
-4. **WALK them to the exact line(s).** Tell them which variable name(s) to paste their value(s) after — the ones you listed in the per-PMS brief (e.g. `HOSTAWAY_ACCOUNT_ID=` and `HOSTAWAY_API_SECRET=`, or `HOSTFULLY_API_KEY=` and `HOSTFULLY_AGENCY_UID=`). They paste each value right after the `=` (no spaces, no quotes), then **save** and tell you "saved." Values go into the FILE, never this chat.
+4. **WALK them to the exact line(s).** Tell them which variable name(s) to paste their value(s) after — the ones you listed in the per-PMS brief (e.g. `HOSTAWAY_ACCOUNT_ID=` and `HOSTAWAY_API_KEY=`, or `HOSTFULLY_API_KEY=` and `HOSTFULLY_AGENCY_UID=`). They paste each value right after the `=` (no spaces, no quotes), then **save** and tell you "saved." Values go into the FILE, never this chat.
 
 5. **SANITY CHECK 2 — FILLED** (after they save): confirm each variable is present and non-empty, without printing the value. Run one grep per variable, e.g.:
    ```bash
    grep -q '^HOSTAWAY_ACCOUNT_ID=.\+' "<BUNDLE_ROOT>/mcp-servers/<pms>/.env" && echo "ACCOUNT_ID present ✅" || echo "still empty — re-open the file and paste it"
-   grep -q '^HOSTAWAY_API_SECRET=.\+' "<BUNDLE_ROOT>/mcp-servers/<pms>/.env" && echo "API_SECRET present ✅" || echo "still empty — re-open the file and paste it"
+   grep -q '^HOSTAWAY_API_KEY=.\+' "<BUNDLE_ROOT>/mcp-servers/<pms>/.env" && echo "API_KEY present ✅" || echo "still empty — re-open the file and paste it"
    ```
    If anything's empty, re-open the file (step 3 command) and have them recheck the line. Never echo the values.
 

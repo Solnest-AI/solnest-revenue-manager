@@ -13,7 +13,7 @@
 > **Pricing — pick ONE (required):**
 > 1. **PriceLabs** — already built and bundled in this folder. Fastest path. ✅
 > 2. **Wheelhouse** — built fresh on your machine from the spec in this file.
-> 3. **Beyond** (formerly Beyond Pricing) — partner-only API; built fresh if you qualify.
+> 3. **Beyond** (formerly Beyond Pricing) — self-serve Partners API (Personal Access Token); built fresh on your machine.
 >
 > **Ops / Cleaning / Access — optional:**
 > 4. **Turno** (formerly TurnoverBnB) — already built and bundled in this folder. ✅
@@ -99,8 +99,8 @@ This table is your **offline seed** for the built-from-research tools — it's w
 | Tool | Category | Build status | Base URL | Auth Header | Key Location |
 |---|---|---|---|---|---|
 | PriceLabs | Pricing | **PRE-BUILT** (`mcp-servers/pricelabs/`) | `https://api.pricelabs.co/v1/` | `X-API-Key: <key>` | Account Settings → API Details → **Get PriceLabs API Key** |
-| Wheelhouse | Pricing | Built-from-research | `https://api.usewheelhouse.com/ss_api/v1/` | `X-User-API-Key: <key>` | `https://app.usewheelhouse.com/u/account/api_token` |
-| Beyond | Pricing | Built-from-research (partner-only) | `https://api-docs.beyondpricing.com/` (partner API — not direct-to-host) | Partner API key | Partner API — contact Beyond support; end-users usually integrate via their PMS |
+| Wheelhouse | Pricing | Built-from-research | `https://api.usewheelhouse.com/ss_api/v1/` | `X-Integration-Api-Key: <key>` (RM API — modern) | Account UI → "Api Key"; RM API is currently beta — request enablement at hello@usewheelhouse.com |
+| Beyond | Pricing | Built-from-research | `https://developers.beyondpricing.com/api/v1/` (Partners API · JSON:API v1.1 — send `Accept: application/vnd.api+json`) | `Authorization: Bearer bpat_<token>` | Self-serve **Personal Access Token**: Beyond → sign-in icon → Settings → **Tokens** (or `v2.beyondpricing.com/dashboard/user/personal-access-tokens`) — shown once, copy it immediately |
 | Turno | Cleaning | **PRE-BUILT** (`mcp-servers/turno/`) | `https://api.turnoverbnb.com/v2` (prod) · `https://sandbox.turnoverbnb.com/v2` (sandbox) | `Authorization: Bearer <JWT>` + `TBNB-Partner-ID: <uuid>` | Turno must grant partner access — email support |
 | Breezeway | Ops / Cleaning / Inspections | Built-from-research | `https://api.breezeway.io/` | `Authorization: JWT <access_token>` (OAuth2 flow) | Request credentials at `https://developer.breezeway.io/docs/obtaining-credentials` |
 | Operto Teams | Smart access / ops tasks | Built-from-research | `https://teams-api.operto.com/api/v1/` | OAuth2 `Authorization: Bearer <token>` from `/oauth/login` (`api_key` + `api_value`) | Operto Teams dashboard → Settings → API Keys |
@@ -156,7 +156,7 @@ Wait for the reply. Store as `<TOOL>`.
 
 - If **1 (PriceLabs)** or **4 (Turno):** this is a **PRE-BUILT** server. Go to the **Pre-Built setup track** below.
 - If **2, 3, 5, 6, or 7:** this is **BUILT-FROM-RESEARCH**. Go to the **Built-From-Research track** below.
-- If **3 (Beyond):** before anything else, send this honest note — "Beyond's public API is partner-only, meant for PMS integrations (Hostaway, Guesty, Hospitable already pull Beyond pricing for you). There's no direct end-user API key flow. Two options: (a) if you're a real integration partner, I can build against their partner API — you'll need to apply for credentials at Beyond support first; (b) otherwise, your PMS MCP already gives you the pricing via the reservation/calendar endpoints, and you might prefer to use PriceLabs (already built and ready) for the pricing slot. Want me to switch you to PriceLabs instead?"
+- If **3 (Beyond):** Beyond has a clean **self-serve REST API** — the **Partners API** at `developers.beyondpricing.com` (JSON:API v1.1). To automate your **own** account you generate a **Personal Access Token** (`bpat_…`) yourself — **no partner application or approval needed.** Build it fresh from the Partners API docs below. ⚠️ Do **not** use `dynamic-api-docs.beyondpricing.com` (the *Dynamic Integration API* — that's for in-house-PMS vendors Beyond calls, the opposite direction) or the deprecated legacy `api.beyondpricing.com/api` `Token` API. (If they'd rather not bother, PriceLabs is pre-built and fastest — but Beyond is fully doable.)
 - If **5 (Breezeway):** warn that Breezeway credentials require filling out a form at `https://developer.breezeway.io/docs/obtaining-credentials` and waiting for approval (can take 1–2 business days).
 - If **7 (other):** ask the platform name. Use `WebSearch` + `WebFetch` to check for a public API. If none exists, be honest and suggest PriceLabs (already built). If yes, treat it as a Built-From-Research tool.
 
@@ -373,8 +373,8 @@ Start from the **verified API reference table** above (base URL, auth header, ke
 - Which endpoints are **writes/deletes/bulk/auto-posting** — note these now so you can gate them behind confirmation later
 
 Seed searches by tool:
-- **Wheelhouse:** docs at `https://api.usewheelhouse.com/wheelhouse_pro_api` (Pro API). Demand Signal needs a separate `IntegrationApiKey`.
-- **Beyond:** `https://api-docs.beyondpricing.com/` and `https://dynamic-api-docs.beyondpricing.com/` (partner-only).
+- **Wheelhouse:** target the **RM API** — docs at `https://api.usewheelhouse.com/wheelhouse_rm_api` (the doc slug is not a URL segment; base stays `https://api.usewheelhouse.com/ss_api/v1/`). Also check `https://api.usewheelhouse.com/wheelhouse_pro_api` for legacy Pro API context only. Demand Signal uses a separate partner-gated `IntegrationApiKey`.
+- **Beyond (Partners API — the right one):** seed from the AI-ready full docs at `https://developers.beyondpricing.com/full-documentation.md` + the OpenAPI schema `https://developers.beyondpricing.com/api/v1/schema/` (interactive `/api/v1/docs/`). Use the **Personal Users / PAT** path. ⚠️ Skip `dynamic-api-docs.beyondpricing.com` (Dynamic Integration API for in-house-PMS vendors — wrong direction) and the deprecated legacy `api.beyondpricing.com/api`.
 - **Breezeway:** `https://developer.breezeway.io/reference` and `https://developer.breezeway.io/docs/obtaining-credentials`.
 - **Operto Teams:** `https://teams.operto.com/api/` (OAuth via `/oauth/login`, refresh via `/oauth/refresh`).
 - **Other:** search `<platform name> public API documentation`.
@@ -410,16 +410,18 @@ Write the server into **`<BUNDLE_ROOT>/mcp-servers/<tool-lowercase>/`**, matchin
 
 ##### Wheelhouse
 - Base URL: `https://api.usewheelhouse.com/ss_api/v1/`
-- Env: `WHEELHOUSE_USER_API_KEY` (required), `WHEELHOUSE_INTEGRATION_API_KEY` (optional)
-- Headers: `X-User-API-Key` for Pro endpoints; `IntegrationApiKey` for Demand Signal
-- **Read/list tools (build first, free to call):** `list_listings`, `get_listing`, `get_pricing_tier`, `get_recent_changes`, `check_in_market`, `list_reservations`, `get_price_recommendations`, `get_base_price_recommendation`, `get_preferences`, `get_min_max_prices`, `get_monthly_seasonality`, `list_segments`, `get_demand_signal` (requires `IntegrationApiKey`)
-- **Write/bulk/auto-posting tools (build these confirmation-gated — `confirm=true` required per call):** `upsert_listing`, `upsert_reservations`, `set_custom_rate`, `bulk_set_custom_rates`, `delete_custom_rates`, `update_price_calendar`, and especially `toggle_auto_posting` (flips automatic price posting on — treat as high-risk; gate it hard or leave it out of v1)
-- Respect the 20 req/min test limit; back-off on 429
+- **Target API: RM API (modern).** Auth header: `X-Integration-Api-Key: <key>` — single key authenticates both integration and user context. Read-only keys exist (PUT/DELETE → 403) — prefer them for the read path. _Legacy Pro API used `X-User-API-Key` + a separate partner `IntegrationApiKey` (two keys) — mention only as legacy in comments._
+- Env: `WHEELHOUSE_API_KEY` (the RM `X-Integration-Api-Key`, required). Optional: `WHEELHOUSE_DEMAND_INTEGRATION_KEY` (partner-gated `IntegrationApiKey` for Demand Signal only).
+- **Key acquisition:** self-serve under Wheelhouse account UI → "Api Key". RM API program access is currently beta — request enablement at hello@usewheelhouse.com before assuming it's live for the operator's account.
+- **Read/list tools (build first; safe with read-only key):** `GET /listings` (fetch `channel` from here — required on most calls), `GET /listings/{id}/price_recommendations?channel=&currency=`, `GET /listings/{id}/base_price_recommendation`, `GET /listings/{id}/price_calendar`, `GET /listings/{id}/last_posted_prices` (actual rate pushed to OTA — reconcile vs recommended), `GET /listings/{id}/min_max_prices`, `GET /listings/{id}/kpis`, `GET /listings/{id}/neighborhood/pricing`, `GET /listings/{id}/neighborhood/occupancy`, `GET /markets`, `GET /sets` (Dynamic Sets). `GET /ss_api/v1/demand_signal/` (keyed by country_code + lat/lng, requires separate `IntegrationApiKey`, partner-gated).
+- **Write/bulk/auto-posting tools (build confirmation-gated — `confirm=true` required per call):** `PUT /preferences/{id}` (sets `base_price`, `base_price_adjustment`, `automatic_rate_posting_enabled`, `minimum_stay_rules_v3`; min/max prices are preference rules here), `PUT /listings/{id}/custom_rates`, `PUT /listings/{id}/bulk_custom_rates` (+ DELETE). `POST /preferences/{id}/preview` is non-mutating and safe on read-only keys — no gate needed. `PUT /preferences/{id}/{setting}` to toggle `automatic_rate_posting` is **HIGH RISK** (flips live price posting) — gate it hard or omit from v1 entirely.
+- Pagination: `page` (1-based) / `per_page` (max 100) / `offset` (0-based). Rate limit: 20 req/min → 429; exponential back-off. RM API is beta — response shapes may change.
+- `last_posted_prices` ≠ `price_recommendations` — these are different fields; do not conflate them.
 
-##### Beyond (partner only)
-- Base URL + endpoints from `https://api-docs.beyondpricing.com/` — confirm in B1 before coding
-- Env: `BEYOND_PARTNER_KEY`
-- Tools: whatever the partner API exposes (typically pricing push, listing sync). **Scope read-only first** — build the read/list tools, and gate any pricing-push/write tool behind explicit per-call confirmation. No portfolio-wide auto-push without a confirm step.
+##### Beyond (Partners API — self-serve PAT)
+- Base URL `https://developers.beyondpricing.com/api/v1/` · JSON:API v1.1 (send `Accept: application/vnd.api+json`) · auth `Authorization: Bearer bpat_<token>`. Pull exact endpoints from `https://developers.beyondpricing.com/full-documentation.md` + the OpenAPI schema (`/api/v1/schema/`) before coding.
+- Env: `BEYOND_API_TOKEN` (the `bpat_…` Personal Access Token)
+- Tools: read **listings**, the **calendar** (daily price + availability), **compsets**, and Beyond's **recommendations**; read/write per-listing **customizations** (base price, min/max price = floor/ceiling, min/max stay, extra-guest fees, time-based adjustments, allowed check-in/out days); toggle price syncing + trigger refreshes. **Scope read-only first** — build the read/list/get tools, and gate every write / customization / sync-toggle behind explicit per-call confirmation (`confirm=true`, default false). No portfolio-wide auto-push without a confirm. Respect `X-RateLimit-*` headers + `Retry-After` on 429 (compset detail is capped ~30 req/min).
 
 ##### Breezeway
 - Base URL: `https://api.breezeway.io/`
@@ -460,34 +462,33 @@ Open it (pick the OS line): `open -e "<BUNDLE_ROOT>/mcp-servers/wheelhouse/.env"
 
 Then send:
 
-> I opened your local `.env` (gitignored, on your machine). Let's grab your Wheelhouse User API Key and paste it into that file.
-> 1. Open **https://app.usewheelhouse.com/u/account/api_token** → log in.
-> 2. Click **Generate API Key** (or **Regenerate**).
-> 3. Copy it immediately.
-> 4. In the `.env` I opened, paste it right after `WHEELHOUSE_USER_API_KEY=` (no spaces, no quotes) and **save**. Also save a copy in your password manager.
+> I opened your local `.env` (gitignored, on your machine). Let's grab your Wheelhouse RM API Key and paste it into that file.
+> 1. Open your Wheelhouse account → look for **"Api Key"** in the account/settings UI.
+> 2. Copy the key immediately.
+> 3. In the `.env` I opened, paste it right after `WHEELHOUSE_API_KEY=` (no spaces, no quotes) and **save**. Also save a copy in your password manager.
 >
 > Paste it into the **file**, not the chat. Say "saved" and I'll verify.
 >
-> If the page is missing, email `tech-support@usewheelhouse.com` to enable API access.
+> If the RM API key option is missing from your account, email `hello@usewheelhouse.com` to request RM API program access (currently beta).
 >
-> Optional: for market **Demand Signal** data, email `tech-support@usewheelhouse.com` for an `IntegrationApiKey` — when you have it, I'll open the file again so you can paste it on the `WHEELHOUSE_INTEGRATION_API_KEY=` line.
+> Optional: for market **Demand Signal** data, request a partner `IntegrationApiKey` from Wheelhouse — when you have it, I'll open the file again so you can paste it on the `WHEELHOUSE_DEMAND_INTEGRATION_KEY=` line.
 
 **SANITY CHECK 2 — FILLED:**
 
 ```bash
-grep -q '^WHEELHOUSE_USER_API_KEY=.\+' "<BUNDLE_ROOT>/mcp-servers/wheelhouse/.env" && echo "key present ✅" || echo "still empty — re-open the file and paste it"
+grep -q '^WHEELHOUSE_API_KEY=.\+' "<BUNDLE_ROOT>/mcp-servers/wheelhouse/.env" && echo "key present ✅" || echo "still empty — re-open the file and paste it"
 ```
 
 **SANITY CHECK 3 — WORKS:**
 
 ```bash
 set -a; . "<BUNDLE_ROOT>/mcp-servers/wheelhouse/.env"; set +a
-curl -sS -H "X-User-API-Key: $WHEELHOUSE_USER_API_KEY" "https://api.usewheelhouse.com/ss_api/v1/listings" -o /dev/null -w "%{http_code}\n"
+curl -sS -H "X-Integration-Api-Key: $WHEELHOUSE_API_KEY" "https://api.usewheelhouse.com/ss_api/v1/listings" -o /dev/null -w "%{http_code}\n"
 ```
 
 `200` = ✅. On failure, re-open the file and recheck the line, or regenerate the key — never a chat paste.
 
-**Beyond (partner)**
+**Beyond (Partners API — Personal Access Token)**
 
 Create and open the file:
 
@@ -505,26 +506,27 @@ Open it (pick the OS line): `open -e "<BUNDLE_ROOT>/mcp-servers/beyond/.env"` (m
 
 Then send:
 
-> Beyond's API is partner-only. I opened your local `.env` (gitignored, on your machine) so you have somewhere to paste once you're approved.
-> 1. Apply for Beyond Partner API access at **https://www.beyondpricing.com/** or email their partnerships team.
-> 2. Once approved, Beyond issues partner credentials.
-> 3. In the `.env` I opened, paste the key right after `BEYOND_PARTNER_KEY=` (no spaces, no quotes) and **save**.
+> Good news — Beyond has a **self-serve** API for your own account; no partner application needed. You'll generate a **Personal Access Token**:
+> 1. Log into Beyond → click your **sign-in icon** (top-right) → **Settings** → **Tokens** (or go straight to **v2.beyondpricing.com/dashboard/user/personal-access-tokens**).
+> 2. **Generate** a new token — it starts with `bpat_` and is **shown only once**, so copy it right away.
+> 3. In the `.env` I opened, paste it right after `BEYOND_API_TOKEN=` (no spaces, no quotes) and **save**.
 >
 > Paste it into the **file**, not the chat. Say "saved" and I'll verify.
 >
-> Honest note: if you're not actively building an integration, PriceLabs (already built in this bundle) is the faster pricing slot.
+> (This needs API access on your Beyond plan — the token screen tells you if it's enabled. If it isn't, PriceLabs is pre-built and ready as a fallback.)
 
 **SANITY CHECK 2 — FILLED:**
 
 ```bash
-grep -q '^BEYOND_PARTNER_KEY=.\+' "<BUNDLE_ROOT>/mcp-servers/beyond/.env" && echo "key present ✅" || echo "still empty — re-open the file and paste it"
+grep -q '^BEYOND_API_TOKEN=.\+' "<BUNDLE_ROOT>/mcp-servers/beyond/.env" && echo "token present ✅" || echo "still empty — re-open the file and paste it"
 ```
 
-**SANITY CHECK 3 — WORKS:** source the file and hit the partner endpoint you confirmed in B1 (auth scheme per their docs), e.g.:
+**SANITY CHECK 3 — WORKS:** source the file and hit the Partners API listings endpoint — JSON:API needs the `vnd.api+json` Accept header:
 
 ```bash
 set -a; . "<BUNDLE_ROOT>/mcp-servers/beyond/.env"; set +a
-curl -sS -H "Authorization: Bearer $BEYOND_PARTNER_KEY" "<beyond-list-endpoint-from-B1>" -o /dev/null -w "%{http_code}\n"
+curl -sS -H "Authorization: Bearer $BEYOND_API_TOKEN" -H "Accept: application/vnd.api+json" \
+  "https://developers.beyondpricing.com/api/v1/listings/?page[size]=5" -o /dev/null -w "%{http_code}\n"
 ```
 
 `200` = ✅. On failure, re-open the file and recheck the line, or re-confirm the auth scheme from B1 — never a chat paste.
@@ -638,7 +640,7 @@ On the **first successful connect**, before declaring done, probe every reachabl
 
 **`<BUNDLE_ROOT>/revenue-manager-plugin/references/<tool-lowercase>-discovery.md`** (or append a "First-run discovery" section to `<BUNDLE_ROOT>/revenue-manager-plugin/references/<tool-lowercase>.md`).
 
-Capture, per endpoint: the path that worked, the response envelope (e.g. `{ "data": [...] }` vs `{ "items": [...], "total" }`), pagination behavior observed, and the exact field names that hold the things you care about (price, date, status, listing name). This is the same trick the bundled Turno server uses (`mcp-servers/turno/docs/API-REFERENCE.md` was built from live responses so nobody re-discovers field names).
+Capture, per endpoint: the path that worked, the response envelope (e.g. `{ "data": [...] }` vs `{ "items": [...], "total" }`), pagination behavior observed, and the exact field names that hold the things you care about (price, date, status, listing name). This is the same trick the bundled Turno server uses — its field names were captured from live responses so nobody re-discovers them.
 
 **Make this persistent and explicit:** future runs **READ this discovery file first** instead of re-hunting the API. State that at the top of the file: *"Read this before probing — built from live responses on `<date>`."*
 
