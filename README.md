@@ -128,7 +128,7 @@ It's your database, in your account. The data lives with you, not in this repo.
 
 ## How to use it
 
-1. **(Optional) Watch the walkthrough Loom** — coming shortly. The setup is self-contained, so you can start without it.
+1. **(Optional) [Watch the walkthrough Loom](https://www.loom.com/share/738aa85f18144db08004ed9c144df92a)** — a 5-minute overview. The setup is self-contained, so you can start without it.
 2. **Put this folder somewhere easy to find** on your computer.
 3. **Open a fresh Claude Code session** with this folder open (or paste the contents of `SETUP.md` as your first message).
 4. **Say "set this up."**

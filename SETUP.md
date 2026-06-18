@@ -169,7 +169,7 @@ When it's time for that platform's API key, follow the [Credential handling cont
 ### Communication & behavior rules (follow exactly)
 
 - **One question per message.** Never stack questions. Wait for the reply.
-- **Reference the walkthrough video** at the very start *if one is linked* at the top of this file — if it's still marked "coming shortly," just reassure them the steps are self-contained and proceed.
+- **Reference the walkthrough video** at the very start — there's a 5-minute Loom linked at the top of this file (https://www.loom.com/share/738aa85f18144db08004ed9c144df92a). Mention it's there if they'd like an overview, and reassure them the steps are fully self-contained either way.
 - **Click-by-click for any credential.** When a key is needed, give exact navigation (which site, which menu, which button).
 - **Credentials NEVER touch the chat — open the file, verify by sourcing.** This is the whole contract, restated as the single behavioral rule. Full mechanics + the 3 sanity checks live in [Credential handling — never in the chat](#credential-handling--never-in-the-chat-the-3-sanity-checks); honor it for every connector:
   - You **never** ask the operator to paste a credential into the chat. You **create** the local, git-ignored `.env` (`cp .env.example .env`), **open** it for them, and they paste the value **into that file** and save. The value never enters the conversation and never enters tracked files.
