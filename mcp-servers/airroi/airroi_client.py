@@ -6,7 +6,10 @@ Google Maps, no scraping — just AirROI.
 
 Auth:  AIRROI_API_KEY  (sent as header `X-API-KEY`)
 Base:  https://api.airroi.com   (v2.1.1)
-Note:  AirROI returns figures in USD only.
+Note:  currency defaults to "native" — figures come back in each market's local
+       currency (e.g. CAD for Canadian markets, GBP for the UK), which normally
+       matches the operator's PMS/PriceLabs currency. "usd" forces USD. Raw ISO
+       codes like "cad"/"eur" are NOT accepted by the API (400) — use "native".
 """
 from __future__ import annotations
 
@@ -61,15 +64,15 @@ def health_check() -> dict:
                 "hint": "Free key: https://www.airroi.com/api/developer/activate"}
     try:
         d = _get("/calculator/estimate",
-                 {"address": "Nashville, TN", "bedrooms": 2, "baths": 1, "guests": 4, "currency": "usd"})
-        return {"ok": True, "base_url": BASE_URL, "currency": "USD only",
-                "sample_estimate_usd": d.get("revenue")}
+                 {"address": "Nashville, TN", "bedrooms": 2, "baths": 1, "guests": 4, "currency": "native"})
+        return {"ok": True, "base_url": BASE_URL, "currency": d.get("currency", "native"),
+                "sample_estimate": d.get("revenue")}
     except AirROIError as e:
         return {"ok": False, "error": str(e),
                 "hint": "Check AIRROI_API_KEY. Free key: https://www.airroi.com/api/developer/activate"}
 
 
-def get_estimate(*, bedrooms, baths, guests, address=None, lat=None, lng=None, currency="usd") -> dict:
+def get_estimate(*, bedrooms, baths, guests, address=None, lat=None, lng=None, currency="native") -> dict:
     params = {"bedrooms": bedrooms, "baths": baths, "guests": guests, "currency": currency}
     if address and not (lat and lng):
         params["address"] = address
@@ -80,7 +83,7 @@ def get_estimate(*, bedrooms, baths, guests, address=None, lat=None, lng=None, c
 
 
 def get_comparables(*, bedrooms, baths, guests, address=None, latitude=None, longitude=None,
-                    currency="usd", radius=None) -> dict:
+                    currency="native", radius=None) -> dict:
     params = {"bedrooms": bedrooms, "baths": baths, "guests": guests, "currency": currency, "radius": radius}
     if address and not (latitude and longitude):
         params["address"] = address
@@ -92,11 +95,11 @@ def get_comparables(*, bedrooms, baths, guests, address=None, latitude=None, lon
     return {"count": len(listings), "listings": listings}
 
 
-def get_listing(listing_id, currency="usd") -> dict:
+def get_listing(listing_id, currency="native") -> dict:
     return _get("/listings", {"id": listing_id, "currency": currency})
 
 
-def get_listing_metrics(listing_id, num_months=12, currency="usd") -> dict:
+def get_listing_metrics(listing_id, num_months=12, currency="native") -> dict:
     data = _get("/listings/metrics/all", {"id": listing_id, "num_months": num_months, "currency": currency})
     results = data.get("results") or []
     return {"count": len(results), "results": results}

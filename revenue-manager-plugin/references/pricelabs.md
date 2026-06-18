@@ -92,7 +92,7 @@ data['data']['Market KPI']['Category']                 # monthly booking window,
 - **Pacing:** Future Occ/New/Canc + Market KPI `Bookings STLY` + `7-day pickup` → are you ahead/behind the market and behind last year.
 - **Floor/ceiling cross-check (Safety Layer #1):** min/max context for the bounds lives here too.
 - **Thin-comp transparency (Safety Layer #3):** read the comp count. If below ~20 (or the same-BR slice is thin), ALWAYS still produce a number, show N, and flag lower confidence in plain language. No hard refusal.
-- **Currency (Safety Layer #4):** this payload is native-currency — anchor every figure to it; never let AirROI USD enter a rec without conversion.
+- **Currency (Safety Layer #4):** this payload is native-currency — anchor every figure to it. AirROI is called with `currency=native` so it normally returns the same currency; still verify AirROI's echoed `currency` field and never let a mismatched-currency figure enter a rec without conversion.
 
 ### 5. `pricelabs_get_rate_plans` — rate-plan / LOS-pricing configuration
 **Returns:** the listing's configured rate plans (e.g. LOS-based / channel-based rate structures, discounts, multipliers).
@@ -198,4 +198,4 @@ When you report ADR-vs-comp-median, be explicit which number you're using. Comp-
 
 ---
 
-*PriceLabs is the tested primary pricing + comp engine for Revenue Manager v1. Wheelhouse / Beyond are detect-and-use pluggable alternatives; AirROI is an optional named-comp qualitative layer (USD-only — convert before any non-USD rec). AirDNA is not used.*
+*PriceLabs is the tested primary pricing + comp engine for Revenue Manager v1. Wheelhouse / Beyond are detect-and-use pluggable alternatives; AirROI is an optional named-comp qualitative layer (returns native local currency via `currency=native` — verify it matches before mixing). AirDNA is not used.*

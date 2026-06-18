@@ -7,7 +7,7 @@ ratings), single-listing detail, and monthly metrics.
 Clean and **credential-free**: the only thing it needs is *your own* free AirROI API key.
 No Firecrawl, no scraping, no other services — just the AirROI API. Ships with **zero secrets**.
 
-> AirROI returns figures in **USD only**.
+> AirROI returns figures in each market's **native local currency** by default (`currency=native`) — e.g. CAD for Canadian markets, GBP for the UK. It covers Canada and international markets, not just the US. (Pass `currency=usd` to force USD; raw ISO codes like `cad`/`eur` are not accepted by the API.)
 
 ## One-time setup
 ```bash

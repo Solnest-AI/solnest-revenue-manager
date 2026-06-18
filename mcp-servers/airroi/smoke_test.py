@@ -4,7 +4,7 @@ import airroi_client as ar
 print("health_check:", ar.health_check())
 
 comps = ar.get_comparables(address="1240 Alpine Road, Sun Peaks, BC, Canada",
-                           bedrooms=3, baths=2, guests=7, currency="usd")
+                           bedrooms=3, baths=2, guests=7, currency="native")
 print(f"comparables: {comps['count']} returned")
 for c in comps["listings"][:3]:
     li = c.get("listing_info") or {}
