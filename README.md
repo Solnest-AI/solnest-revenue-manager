@@ -68,7 +68,7 @@ This covers:
 
 - **Other PMSs:** Hostaway, Guesty (Pro + For Hosts), Hostfully, OwnerRez, Lodgify, Uplisting, Smoobu
 - **Other pricing tools:** Wheelhouse, Beyond
-- **Other ops tools:** Breezeway, Operto
+- **Other ops tools:** Breezeway
 
 Here's how that build works (Claude does all of it — you just answer the occasional question):
 
@@ -91,7 +91,7 @@ Same end result either way: a working connector, your key kept local, your data 
 - Pulls a **full year of forward calendar** plus your **complete booking history**.
 - Treats the **live PMS calendar as ground truth** for what's actually listed, cross-references it against your pricing tool's recommendations, and figures out your real markup **empirically** — from your own numbers, not a guess.
 - Tracks both your **ask rate** (what's on the calendar) and your **cleared rate** (ADR — what actually booked).
-- Pulls in **RankBreeze, Turno/Breezeway/Operto, and AirROI** automatically when they're connected, for ranking, ops, and competitor context.
+- Pulls in **RankBreeze, Turno/Breezeway, and AirROI** automatically when they're connected, for ranking, ops, and competitor context.
 - Hands you a plain-English report of where you're underpriced, overpriced, and what to change.
 - On request, exports a **multi-tab spreadsheet** — a portfolio summary tab plus one tab per property (full breakdown) — saved to your Desktop. Report-only, like everything else.
 
@@ -169,8 +169,7 @@ Your keys live only in your local `.env` / `session.txt`, which are gitignored. 
 Have these ready before you start (Claude checks them, but it's faster if they're handled):
 
 - **[Claude Code](https://claude.ai/code)** installed.
-- **Node.js 18+** — the Hospitable and PriceLabs connectors run on it, and any connector Claude builds fresh is Node too.
-- **Python 3.11+** — the Turno, RankBreeze, and AirROI connectors run on it. (Turno specifically needs 3.11+; on exactly 3.10 its install will fail. Turno also uses `uv`, which Claude will help you install if needed.)
+- **Node.js + Python — you don't pre-install these.** The setup **installs them for you automatically** (Mac or Windows) if they're missing: **Node 18+** for the core connectors, and **Python 3.11+** plus `uv` only if you add a Python-based add-on like Turno.
 - A login for your **PMS** (Hospitable, Hostaway, Guesty, Hostfully, OwnerRez, Lodgify, Uplisting, or Smoobu).
 - A login for your **pricing tool** (PriceLabs, Wheelhouse, or Beyond).
 - A **free Supabase account** — sign up at [supabase.com](https://supabase.com), no card needed for the free tier.

@@ -8,7 +8,7 @@
 > **What you'll get:** A working MCP (Model Context Protocol) server that connects Claude directly to your pricing or ops tool. Ask Claude to pull price recommendations, review rate changes, schedule cleans, check door codes — all in plain English.
 >
 > **A pricing tool is required. Ops tools are optional.**
-> The Revenue Manager needs a **pricing slot filled** to do its job — it cross-references your PMS calendar against your pricing engine's recommendations. So you pick **one** pricing tool. Ops/cleaning/access tools (Turno, Breezeway, Operto) are a **nice bonus** — set one up if you want Claude managing turnovers and door codes too, skip them if you don't.
+> The Revenue Manager needs a **pricing slot filled** to do its job — it cross-references your PMS calendar against your pricing engine's recommendations. So you pick **one** pricing tool. Ops/cleaning/access tools (Turno, Breezeway) are a **nice bonus** — set one up if you want Claude managing turnovers and door codes too, skip them if you don't.
 >
 > **Pricing — pick ONE (required):**
 > 1. **PriceLabs** — already built and bundled in this folder. Fastest path. ✅
@@ -18,7 +18,6 @@
 > **Ops / Cleaning / Access — optional:**
 > 4. **Turno** (formerly TurnoverBnB) — already built and bundled in this folder. ✅
 > 5. **Breezeway** — cleaning, inspections, maintenance. Built fresh on your machine.
-> 6. **Operto Teams** — smart locks, access codes, SOP tasks. Built fresh on your machine.
 >
 > Using a different tool? Tell Claude at the start — it'll research the API and build one if a public API exists.
 
@@ -32,7 +31,7 @@ You are an **MCP specialist** setting up a pricing/ops MCP connector for the ope
 
 ### 🔐 Credential handling contract — read this BEFORE touching any key (the hard rule)
 
-This applies to **every API key, token, secret, or cookie**, in **every** connector (PriceLabs, Turno, Wheelhouse, Beyond, Breezeway, Operto — and any "other" tool you build). There are **zero exceptions.** The founder presents this live on stage as the headline promise: *"you never paste your credentials into the chat."* So it has to be airtight.
+This applies to **every API key, token, secret, or cookie**, in **every** connector (PriceLabs, Turno, Wheelhouse, Beyond, Breezeway — and any "other" tool you build). There are **zero exceptions.** The founder presents this live on stage as the headline promise: *"you never paste your credentials into the chat."* So it has to be airtight.
 
 **Absolute rules:**
 - **NEVER ask the operator to paste a credential into the chat.** No "paste it here," no "paste it as KEY: …", no `<paste>` blocks. The credential goes into a file on their machine — never into this conversation.
@@ -82,7 +81,7 @@ This connector is **recommend-only**. Your job is to *surface* pricing, rates, o
 ### Two kinds of tools in this file
 
 1. **PRE-BUILT (PriceLabs, Turno)** — the finished server source already lives in this bundle under `mcp-servers/pricelabs/` and `mcp-servers/turno/`. You do **NOT** rebuild these. You install dependencies, the operator drops in their key, register, and verify. That's it.
-2. **BUILT-FROM-RESEARCH (Wheelhouse, Beyond, Breezeway, Operto)** — there is **no** bundled server for these. You **build a fresh MCP server on the operator's machine**, writing the code yourself from the verified reference table below plus live API docs. You do **NOT** invoke any external skill or generator — you write the files directly.
+2. **BUILT-FROM-RESEARCH (Wheelhouse, Beyond, Breezeway)** — there is **no** bundled server for these. You **build a fresh MCP server on the operator's machine**, writing the code yourself from the verified reference table below plus live API docs. You do **NOT** invoke any external skill or generator — you write the files directly.
 
 ### Communication rules
 - One question per message.
@@ -103,7 +102,6 @@ This table is your **offline seed** for the built-from-research tools — it's w
 | Beyond | Pricing | Built-from-research | `https://developers.beyondpricing.com/api/v1/` (Partners API · JSON:API v1.1 — send `Accept: application/vnd.api+json`) | `Authorization: Bearer bpat_<token>` | Self-serve **Personal Access Token**: Beyond → sign-in icon → Settings → **Tokens** (or `v2.beyondpricing.com/dashboard/user/personal-access-tokens`) — shown once, copy it immediately |
 | Turno | Cleaning | **PRE-BUILT** (`mcp-servers/turno/`) | `https://api.turnoverbnb.com/v2` (prod) · `https://sandbox.turnoverbnb.com/v2` (sandbox) | `Authorization: Bearer <JWT>` + `TBNB-Partner-ID: <uuid>` | Turno must grant partner access — email support |
 | Breezeway | Ops / Cleaning / Inspections | Built-from-research | `https://api.breezeway.io/` | `Authorization: JWT <access_token>` (OAuth2 flow) | Request credentials at `https://developer.breezeway.io/docs/obtaining-credentials` |
-| Operto Teams | Smart access / ops tasks | Built-from-research | `https://teams-api.operto.com/api/v1/` | OAuth2 `Authorization: Bearer <token>` from `/oauth/login` (`api_key` + `api_value`) | Operto Teams dashboard → Settings → API Keys |
 
 ---
 
@@ -148,17 +146,16 @@ Send verbatim:
 > **Ops / Cleaning / Access (optional):**
 > 4. **Turno** (formerly TurnoverBnB) ✅ already built
 > 5. **Breezeway** (also handles inspections & maintenance)
-> 6. **Operto Teams** (smart locks & access codes)
 >
-> 7. Something else — tell me the name
+> 6. Something else — tell me the name
 
 Wait for the reply. Store as `<TOOL>`.
 
 - If **1 (PriceLabs)** or **4 (Turno):** this is a **PRE-BUILT** server. Go to the **Pre-Built setup track** below.
-- If **2, 3, 5, 6, or 7:** this is **BUILT-FROM-RESEARCH**. Go to the **Built-From-Research track** below.
+- If **2, 3, 5, or 6:** this is **BUILT-FROM-RESEARCH**. Go to the **Built-From-Research track** below.
 - If **3 (Beyond):** Beyond has a clean **self-serve REST API** — the **Partners API** at `developers.beyondpricing.com` (JSON:API v1.1). To automate your **own** account you generate a **Personal Access Token** (`bpat_…`) yourself — **no partner application or approval needed.** Build it fresh from the Partners API docs below. ⚠️ Do **not** use `dynamic-api-docs.beyondpricing.com` (the *Dynamic Integration API* — that's for in-house-PMS vendors Beyond calls, the opposite direction) or the deprecated legacy `api.beyondpricing.com/api` `Token` API. (If they'd rather not bother, PriceLabs is pre-built and fastest — but Beyond is fully doable.)
 - If **5 (Breezeway):** warn that Breezeway credentials require filling out a form at `https://developer.breezeway.io/docs/obtaining-credentials` and waiting for approval (can take 1–2 business days).
-- If **7 (other):** ask the platform name. Use `WebSearch` + `WebFetch` to check for a public API. If none exists, be honest and suggest PriceLabs (already built). If yes, treat it as a Built-From-Research tool.
+- If **6 (other):** ask the platform name. Use `WebSearch` + `WebFetch` to check for a public API. If none exists, be honest and suggest PriceLabs (already built). If yes, treat it as a Built-From-Research tool.
 
 ---
 
@@ -344,7 +341,7 @@ If the tools don't show up, Claude Code wasn't fully closed — quit it entirely
 
 ---
 
-## TRACK B — Built-From-Research (Wheelhouse, Beyond, Breezeway, Operto, or "other")
+## TRACK B — Built-From-Research (Wheelhouse, Beyond, Breezeway, or "other")
 
 There is **no bundled server** for these. You build one fresh, on the operator's machine, writing the code yourself. **Do not invoke any external skill or generator.** You write the files directly, modeling them on the bundled examples in `mcp-servers/` (look at `mcp-servers/pricelabs/` for a TypeScript example and `mcp-servers/turno/` for a Python example).
 
@@ -376,7 +373,6 @@ Seed searches by tool:
 - **Wheelhouse:** target the **RM API** — docs at `https://api.usewheelhouse.com/wheelhouse_rm_api` (the doc slug is not a URL segment; base stays `https://api.usewheelhouse.com/ss_api/v1/`). Also check `https://api.usewheelhouse.com/wheelhouse_pro_api` for legacy Pro API context only. Demand Signal uses a separate partner-gated `IntegrationApiKey`.
 - **Beyond (Partners API — the right one):** seed from the AI-ready full docs at `https://developers.beyondpricing.com/full-documentation.md` + the OpenAPI schema `https://developers.beyondpricing.com/api/v1/schema/` (interactive `/api/v1/docs/`). Use the **Personal Users / PAT** path. ⚠️ Skip `dynamic-api-docs.beyondpricing.com` (Dynamic Integration API for in-house-PMS vendors — wrong direction) and the deprecated legacy `api.beyondpricing.com/api`.
 - **Breezeway:** `https://developer.breezeway.io/reference` and `https://developer.breezeway.io/docs/obtaining-credentials`.
-- **Operto Teams:** `https://teams.operto.com/api/` (OAuth via `/oauth/login`, refresh via `/oauth/refresh`).
 - **Other:** search `<platform name> public API documentation`.
 
 #### B2 — WRITE the API reference doc
@@ -403,7 +399,7 @@ Write the server into **`<BUNDLE_ROOT>/mcp-servers/<tool-lowercase>/`**, matchin
 - **Exponential back-off, 3 retries on 429** (and on 5xx)
 - At least one **smoke test** hitting a list endpoint
 - Ship `.env.example`, `.gitignore` (`.env`, `node_modules/`, `dist/`, `.venv/`, `session.txt`), and a short README with env vars + run command
-- For OAuth tools (Breezeway, Operto): implement the token exchange **and** automatic refresh before expiry
+- For OAuth tools (Breezeway): implement the token exchange **and** automatic refresh before expiry
 - **Recommend-only gating (REQUIRED for all built-from-research tools, not just Beyond):** build the read/list/get tools first. Every **write, update, set, push, bulk, delete, or auto-posting** tool must require an **explicit per-call confirmation** (e.g. a `confirm=true` argument that defaults to false, mirroring the bundled Turno server). Tools that flip automatic price posting on (like Wheelhouse's `toggle_auto_posting`) and any portfolio-wide bulk setter (like `bulk_set_custom_rates`) are confirmation-required — or omit them from v1 entirely if you're unsure. Never ship an ungated portfolio-wide rate pusher.
 
 **Tool-specific build briefs:**
@@ -431,14 +427,6 @@ Write the server into **`<BUNDLE_ROOT>/mcp-servers/<tool-lowercase>/`**, matchin
 - **Read/list tools (build first):** `breezeway_list_properties` (`GET /public/inventory/v1/property`), `breezeway_get_property` (`/property/{id}`), `breezeway_list_tasks` (`GET /public/task/v1/task`), `breezeway_get_task` (`/task/{id}`), `breezeway_list_reservations` (`GET /public/inventory/v1/reservation`), `breezeway_get_task_costs`
 - **Write tools (confirmation-gated):** `breezeway_create_task` (`POST /task`), `breezeway_update_task` (`PATCH /task/{id}`), `breezeway_create_reservation` (`POST /reservation`)
 - Confirm every path against `https://developer.breezeway.io/reference` in B1
-
-##### Operto Teams
-- Base URL: `https://teams-api.operto.com/api/v1/`
-- Env: `OPERTO_API_KEY`, `OPERTO_API_VALUE`
-- Auth flow: POST `/oauth/login` with `api_key` + `api_value` → bearer token; refresh via `GET /oauth/refresh`
-- Header: `Authorization: Bearer <token>`
-- **Read/list tools (build first):** `operto_list_properties` (`GET /properties`), `operto_get_property` (`/properties/{id}`), `operto_list_tasks`, `operto_get_task`, `operto_list_access_codes`, `operto_list_staff`
-- **Write tools (confirmation-gated):** `operto_update_property` (`PUT /properties/{id}`), `operto_create_access_code` (creates a live guest access code with a time window — confirm before issuing)
 
 ##### Credential walkthroughs (Built-From-Research tools)
 
@@ -578,54 +566,6 @@ curl -sS -H "Authorization: JWT $TOKEN" "https://api.breezeway.io/public/invento
 
 `200` = ✅. On failure, re-open the file and recheck the `BREEZEWAY_CLIENT_ID=` / `BREEZEWAY_CLIENT_SECRET=` lines — never a chat paste.
 
-**Operto Teams**
-
-Create and open the file:
-
-```bash
-cp "<BUNDLE_ROOT>/mcp-servers/operto/.env.example" "<BUNDLE_ROOT>/mcp-servers/operto/.env"
-```
-
-**SANITY CHECK 1 — SAFE:**
-
-```bash
-ls "<BUNDLE_ROOT>/mcp-servers/operto/.env" && grep -q '^\.env$' "<BUNDLE_ROOT>/mcp-servers/operto/.gitignore" && echo "safe to paste ✅" || echo "STOP — .env missing or not gitignored"
-```
-
-Open it (pick the OS line): `open -e "<BUNDLE_ROOT>/mcp-servers/operto/.env"` (macOS) · `notepad "<BUNDLE_ROOT>\mcp-servers\operto\.env"` (Windows) · `xdg-open "<BUNDLE_ROOT>/mcp-servers/operto/.env"` (Linux). If it fails, give them the full path to open manually.
-
-Then send:
-
-> I opened your local `.env` (gitignored, on your machine). Let's get your Operto Teams API credentials into it.
-> 1. Log into **https://teams.operto.com/** (or your Operto Teams URL).
-> 2. Settings → **API** (or **Developer / API Keys**).
-> 3. Click **Add API Key** → name it "Claude MCP" → grant read/write for properties, tasks, codes.
-> 4. Copy both the **API Key** and the **API Value** (secret).
-> 5. In the `.env` I opened, paste the API Key after `OPERTO_API_KEY=` and the API Value after `OPERTO_API_VALUE=` (no spaces, no quotes), then **save**.
->
-> Paste both into the **file**, not the chat. Say "saved" and I'll verify.
-
-**SANITY CHECK 2 — FILLED:**
-
-```bash
-grep -q '^OPERTO_API_KEY=.\+' "<BUNDLE_ROOT>/mcp-servers/operto/.env" \
-  && grep -q '^OPERTO_API_VALUE=.\+' "<BUNDLE_ROOT>/mcp-servers/operto/.env" \
-  && echo "both creds present ✅" || echo "one is still empty — re-open the file and paste it"
-```
-
-**SANITY CHECK 3 — WORKS:** source the file, log in for a bearer token, then hit a read endpoint — secret never enters the chat:
-
-```bash
-set -a; . "<BUNDLE_ROOT>/mcp-servers/operto/.env"; set +a
-TOKEN=$(curl -sS -X POST "https://teams-api.operto.com/api/v1/oauth/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"api_key\":\"$OPERTO_API_KEY\",\"api_value\":\"$OPERTO_API_VALUE\"}" \
-  | python3 -c "import sys,json;print(json.load(sys.stdin).get('access_token',''))")
-curl -sS -H "Authorization: Bearer $TOKEN" "https://teams-api.operto.com/api/v1/properties" -o /dev/null -w "%{http_code}\n"
-```
-
-`200` = ✅. On failure, re-open the file and recheck the `OPERTO_API_KEY=` / `OPERTO_API_VALUE=` lines — never a chat paste.
-
 ##### After building
 1. The operator's `.env` is already created and filled per the credential walkthrough above (from the `.env.example` you generated) — the **operator pasted the values into the file**, you never typed them. If a value still needs to go in, re-run that tool's walkthrough (open the file, walk them to the key, paste-on-line, save, 3 sanity checks). Never echo a value in chat, never write one with the Edit/Write tool.
 2. Install deps and confirm it builds:
@@ -686,7 +626,6 @@ Tailor the example prompts to the tool. Lead with **read-first** prompts; any ch
 - **Beyond:** "Show me Beyond's recommended prices for all listings so I can review before pushing anything" · "Compare Beyond's recs to last month's actuals"
 - **Turno:** "Show cleans scheduled for this weekend" · "Draft a cleaning project for property [ID] on April 20 and confirm with me before creating it" · "Who cleaned property [ID] last?"
 - **Breezeway:** "List open tasks for property [ID]" · "Show me task costs for March" · "Draft an inspection task for tomorrow at [property] — confirm before creating"
-- **Operto Teams:** "Show staff with access to [property]" · "List access codes for property [ID]" · "Propose a guest access code for reservation dates [X] and confirm with me before generating it"
 
 > Your credentials live in the server's local `.env` (or `session.txt`) — you pasted them into that file yourself, it's gitignored, it stays on your machine, and it's never sent anywhere but that tool's own API. Nothing ever went through this chat.
 > Anything breaks — re-paste this file and I'll fix it.
@@ -696,7 +635,6 @@ Tailor the example prompts to the tool. Lead with **read-first** prompts; any ch
 - **400:** a required param is missing — check the reference doc you wrote (`<BUNDLE_ROOT>/revenue-manager-plugin/references/<tool>.md`) or the live docs.
 - **429 / 5xx:** exponential back-off is built in; if it persists, you're over the rate limit — slow down.
 - **JWT expired (Breezeway):** the refresh flow should auto-renew; if it didn't, re-exchange with the client credentials (sourced from the `.env`, never the chat).
-- **Operto token expired:** call `/oauth/refresh` before retrying.
 - **Turno: wrong creds / sandbox vs prod:** run `turno_check_connection`; re-open the `.env` and confirm `TURNO_API_TOKEN` holds the long JWT (`eyJ...`), not the short hex client key, and check `TURNO_ENV`.
 - **Tool access not yet enabled** (Turno/Breezeway/Beyond): the operator must follow up with that vendor's support to turn on API/partner access.
 - **MCP not showing in Claude Code:** Claude Code must be **fully closed and reopened**, not reloaded.
@@ -708,6 +646,5 @@ Tailor the example prompts to the tool. Lead with **read-first** prompts; any ch
 
 - **Pricing tools** (PriceLabs, Wheelhouse, Beyond) = dynamic rate engines. They read your PMS calendar + booking data and push back recommended nightly prices. This is the **required slot** for the Revenue Manager — it's the recommendation source Claude cross-references against your real calendar. PriceLabs is pre-built in this bundle; Wheelhouse and Beyond get built fresh on your machine.
 - **Cleaning/ops tools** (Turno, Breezeway) = scheduling + task management for turnovers, inspections, maintenance. **Optional.** MCP lets Claude create/query/manage those jobs from any chat. Turno is pre-built; Breezeway gets built fresh.
-- **Smart access** (Operto Teams) = guest access codes tied to check-in dates + keyless entry + staff access. **Optional.** MCP lets Claude propose codes and audit access. Built fresh on your machine.
 
 These are separate categories from the PMS itself — you usually run **one PMS + one pricing tool** (required) **+ optionally one ops/cleaning tool + one smart-access tool**, and they all talk to each other via APIs. Once each one has an MCP, Claude becomes the orchestrator across the whole stack — recommend-only, with you confirming every change that touches your live business.

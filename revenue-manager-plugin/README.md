@@ -38,7 +38,7 @@ These make the report richer when they're connected. If they're absent, the skil
 | Tool | What it adds |
 |---|---|
 | **RankBreeze** (`mcp__rankbreeze__*`) | Ranking / visibility — the visibility spoke of the flywheel. When absent, ranking is flagged as a manual check. |
-| **Ops MCPs** — Turno (`mcp__turno__*`), Breezeway, Operto | Turnover cost + operational signals (turnover-cost leak on too many 1-night stays, etc.) |
+| **Ops MCPs** — Turno (`mcp__turno__*`), Breezeway | Turnover cost + operational signals (turnover-cost leak on too many 1-night stays, etc.) |
 | **AirROI** | Named-competitor comps — a richer qualitative comp layer on top of PriceLabs' aggregate neighborhood data. Returns figures in **native local currency** by default (`currency=native` — CAD for Canadian markets, etc.), normally matching your PMS/PriceLabs; the currency gate verifies it and never silently mixes currencies or contradicts PriceLabs without explanation. Covers Canada + international markets. (Now a proper MCP, `mcp__airroi__*`.) |
 
 ---

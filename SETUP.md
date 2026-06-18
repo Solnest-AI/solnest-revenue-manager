@@ -32,7 +32,7 @@ It **recommends, you approve** — always. It never pushes a price change on its
 You'll grab each key live, click-by-click — and you'll paste it **into a file Claude opens for you, never into the chat.** Keys go into local config on your own machine — never into this folder's tracked files, never to anyone but the tool they belong to. But have logins ready for:
 
 1. **Claude Code** installed and working (you're reading this in it, so ✅).
-2. **Node.js 18 or newer** (Claude will check this for you — don't worry if you're unsure). If your PMS or pricing tool needs a fresh Python build, Claude will check for **Python 3.11+** too, but only if needed. (One of the optional add-ons, Turno, requires **3.11+** specifically — Claude will check for it before you add Turno.)
+2. **Nothing else to install.** The setup **installs Node.js for you automatically** if it's missing — Mac or Windows — and installs **Python 3.11+** (plus `uv`) for you too, but only if you add a Python-based add-on like Turno. You don't go hunting for any installers; Claude handles it.
 3. A login for your **PMS** (the platform you manage bookings in).
 4. A login for **PriceLabs** (or Wheelhouse / Beyond).
 5. A **Supabase** account — free tier is fine. If you don't have one, Claude walks you through creating it during Phase 3. (supabase.com)
@@ -159,7 +159,7 @@ Keys stay in the local `.env` / `session.txt` (both gitignored) — never commit
 
 **B) BUILT-FROM-RESEARCH — no bundled folder; you write the connector fresh, here, into `mcp-servers/<platform>/`.**
 
-These platforms have **no** pre-built server: PMS = Hostaway, Guesty (Pro + For Hosts), Hostfully, OwnerRez, Lodgify, Uplisting, Smoobu · Pricing = Wheelhouse, Beyond · Ops = Breezeway, Operto. For any of these you follow the build flow inside `build-pms-mcp.md` (PMS) or `build-pricing-ops-mcp.md` (pricing/ops). That flow is:
+These platforms have **no** pre-built server: PMS = Hostaway, Guesty (Pro + For Hosts), Hostfully, OwnerRez, Lodgify, Uplisting, Smoobu · Pricing = Wheelhouse, Beyond · Ops = Breezeway. For any of these you follow the build flow inside `build-pms-mcp.md` (PMS) or `build-pricing-ops-mcp.md` (pricing/ops). That flow is:
 
 1. **RESEARCH** the platform's live API docs (WebSearch + WebFetch), seeded by the **verified API reference table already embedded in that build file** (base URL, auth header, where the key lives). That table is your offline starting point — trust it, then confirm against the live docs.
 2. **WRITE** a full API reference doc to `revenue-manager-plugin/references/<platform>.md` (the same folder the bundled PriceLabs + Hospitable references already live in) — endpoints, auth, params, pagination, rate limits.
@@ -193,7 +193,7 @@ When it's time for that platform's API key, follow the [Credential handling cont
 | **1** | Connect the PMS | Pre-built `mcp-servers/hospitable/` **or** build-from-research via `build-pms-mcp.md` |
 | **2** | Connect the pricing tool (PriceLabs) | Pre-built `mcp-servers/pricelabs/` **or** build-from-research via `build-pricing-ops-mcp.md` |
 | **3** | Set up Supabase + run both migrations | (this file + plugin `migrations/`) |
-| **4** | Offer enrichment add-ons — **ask about each, every run** (optional/skippable): RankBreeze, Turno, AirROI (bundled) · Breezeway/Operto (built) | `mcp-servers/*` · `build-pricing-ops-mcp.md` |
+| **4** | Offer enrichment add-ons — **ask about each, every run** (optional/skippable): RankBreeze, Turno, AirROI (bundled) · Breezeway (built) | `mcp-servers/*` · `build-pricing-ops-mcp.md` |
 | **5** | Install the plugin + first run | (this file + `revenue-manager-plugin/`) |
 
 ---
@@ -218,13 +218,17 @@ If something's missing, the operator probably opened a partial copy or a single 
 
 > **Checkpoint 0.1:** You can `ls` `<BUNDLE_ROOT>` and see both build files, `mcp-servers/hospitable` + `mcp-servers/pricelabs`, the plugin's `SKILL.md`, and both migration files. All local.
 
-**Step 0.2 — Check Node.js.**
+**Step 0.2 — Check Node.js, and AUTO-INSTALL it if missing (never make a non-technical operator hunt for an installer).**
 
 Run `node -v`. Need **18+**.
 - If 18+ → ✅, say so and move on.
-- If missing or older → walk them to https://nodejs.org/ to install the **LTS** version, then re-check. Don't proceed until `node -v` reports 18+. (The Hospitable and PriceLabs connectors are Node, so this is required for the core path.)
+- If missing or older → **install it for them automatically.** Detect the OS and use its package manager; narrate it briefly ("installing Node for you — one sec"):
+  - **macOS:** if Homebrew is present (`command -v brew`), run `brew install node`. If Homebrew isn't installed, either install it (`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`) then `brew install node`, **or** download + run the official LTS `.pkg` from https://nodejs.org/.
+  - **Windows:** `winget install OpenJS.NodeJS.LTS` (winget ships with Windows 10/11). Fallback: `choco install nodejs-lts` if Chocolatey is present, else the official installer from https://nodejs.org/.
+  - **Linux:** the distro package manager (`apt install nodejs`, `dnf install nodejs`) or `nvm`.
+  - After installing, **open a fresh shell** and re-check `node -v` (a new install doesn't update the current shell's PATH). Only fall back to "please install the LTS from https://nodejs.org/ and tell me when it's done" if every auto-install path genuinely fails. (Hospitable + PriceLabs are Node — the core path needs this.)
 
-> **Note on Python (only if needed later):** the core path (Hospitable + PriceLabs) is Node-only — no Python required. Some **optional Phase 4 add-ons are Python**, and **Turno specifically needs Python 3.11+** (its `pyproject.toml` declares `requires-python >=3.11`). RankBreeze and AirROI are fine on 3.10+. Don't make them install Python now; just check `python3 --version` at the moment they opt into a Python add-on, and if they pick Turno on exactly 3.10, walk them to install 3.11+ (https://www.python.org/downloads/) before building it — otherwise `uv sync` / `pip` will refuse or mis-resolve.
+> **Note on Python (auto-installed, and only when a Python add-on is chosen):** the core path (Hospitable + PriceLabs) is Node-only — no Python required. Some **optional Phase 4 add-ons are Python**, and **Turno needs Python 3.11+** (`requires-python >=3.11`). Don't install Python up front. When the operator opts into a Python add-on, check `python3 --version` and **auto-install if it's missing or too old** — **macOS** `brew install python@3.12`, **Windows** `winget install Python.Python.3.12`, **Linux** the distro package (fallback https://www.python.org/downloads/). For Turno, also **auto-install `uv`**: macOS/Linux `curl -LsSf https://astral.sh/uv/install.sh | sh`, Windows `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`. Re-check the version in a fresh shell after installing. RankBreeze and AirROI are fine on 3.10+.
 
 **Step 0.3 — Protect secrets (quick pass).**
 
@@ -516,7 +520,7 @@ First check `python3 --version` is **3.11+** (Turno's `pyproject.toml` requires 
 **3️⃣ AirROI — named-competitor comps** *(pre-built)* — named competitors a guest would actually compare, each with TTM revenue / ADR / occupancy / ratings, on top of PriceLabs' aggregate percentiles. Returns figures in **native local currency** by default (CAD for Canadian markets, etc.) and **covers Canada + international markets, not just the US.**
 `cd mcp-servers/airroi` → `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`. Contract: `cp .env.example .env`, **open** it, the operator grabs a **free** key at **https://www.airroi.com/api/developer/activate** and pastes it **into the file** on `AIRROI_API_KEY=`, save. 3 sanity checks (FILLED via `grep`; WORKS via a real comp/list call). Register the venv interpreter pointed at `server.py`, restart.
 
-**Mention only if they ask, or if they use Breezeway/Operto instead of Turno:** Breezeway / Operto are **built fresh** from `build-pricing-ops-mcp.md` (you write the code — no external skill), credential via the same contract. Offer as the ops alternative for non-Turno operators.
+**Mention only if they ask, or if they use Breezeway instead of Turno:** Breezeway is **built fresh** from `build-pricing-ops-mcp.md` (you write the code — no external skill), credential via the same contract. Offer as the ops alternative for non-Turno operators.
 
 **AirROI currency note:** AirROI returns each market's **native local currency** by default (the connector calls it with `currency=native`) — so a Canadian operator gets CAD comps that already match PriceLabs, no conversion needed. It covers Canada and international markets, not just the US. The skill's currency gate still **verifies** the returned currency and only converts/flags on a genuine mismatch (e.g. a cross-border comp in a different currency) — never silently mixes. (RankBreeze and Turno have no currency issue.)
 
@@ -630,7 +634,7 @@ Once the core phases are done — PMS, pricing, Supabase, the Phase 4 add-on off
 | 1 | Your PMS | Hospitable: re-run the `mcp-servers/hospitable` build · others: re-run `build-pms-mcp.md` |
 | 2 | PriceLabs (pricing) | PriceLabs: re-run the `mcp-servers/pricelabs` build · others: re-run `build-pricing-ops-mcp.md` |
 | 3 | Supabase audit DB | Re-check the MCP + re-run both migrations |
-| 4 *(optional — always offered)* | Enrichment: RankBreeze · Turno · AirROI · Breezeway/Operto | Re-add the tool, fully restart |
+| 4 *(optional — always offered)* | Enrichment: RankBreeze · Turno · AirROI · Breezeway | Re-add the tool, fully restart |
 | 5 | Revenue Manager plugin | Reinstall plugin, **fully restart** Claude Code |
 
 **Three golden rules:** your keys go into a local `.env` / `session.txt` that Claude opens for you — **you paste into the file, never into the chat** — and they never get committed (never `git add` a `.env`) · always **fully restart** Claude Code after adding an MCP or the plugin · it **recommends, you approve** — nothing pushes on its own.

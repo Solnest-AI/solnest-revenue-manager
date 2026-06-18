@@ -14,7 +14,7 @@ description: >
   PriceLabs neighborhood data as the comp engine, treats the PMS calendar as
   ground truth for listed price, tracks both ask (calendar) and cleared (ADR)
   rates with empirically-measured markup, auto-detects optional enrichment
-  (RankBreeze for ranking/visibility, Turno/Breezeway/Operto for ops, AirROI
+  (RankBreeze for ranking/visibility, Turno/Breezeway for ops, AirROI
   for named-competitor comps), and logs every decision and change to four
   Supabase audit tables. On request, it also exports a multi-tab Excel
   workbook (portfolio summary tab + one tab per property, full breakdown) as
@@ -92,7 +92,6 @@ These are **never hard dependencies and never sit in a critical path.** If they'
 | RankBreeze | `mcp__rankbreeze__*` (e.g. `get_rankings`, `get_calendar_rankings`, `get_competitor_rates`, `get_metrics`, `analyze_property`, `list_properties`) | The **visibility spoke** of the flywheel — ranking position, page-view/visibility signal. If absent, ranking becomes a flagged **manual check**, not a blocker. |
 | Turno | `mcp__turno__*` (e.g. `turno_list_projects`, `turno_list_bookings`) | Turnover cost / ops signal — flags turnover cost as a revenue leak on too many 1-night stays. |
 | Breezeway | `breezeway_` | Maintenance/task cost — explains margin drops even with strong occupancy. |
-| Operto | `operto_` | Ops signals (unusual unlock patterns, etc.). |
 | AirROI | `mcp__airroi__*` (`get_estimate`, `get_comparables`, `get_listing`, `get_listing_metrics`, `health_check`) | **Named-competitor** qualitative comp layer on top of PriceLabs' aggregate neighborhood data. Returns **native local currency** (`currency=native`) — normally matches your market; currency-match check below. |
 
 **AirROI hard caveats (read every time you consider using it):**
@@ -109,7 +108,7 @@ Open your first response with:
   Pricing:    <PriceLabs | Wheelhouse | Beyond | ❌ none — REQUIRED>
   Supabase:   <MCP | REST-env | ❌ none (audit logging disabled)>
   Ranking:    <RankBreeze | ⚠️ none (ranking = manual check)>
-  Ops:        <Turno / Breezeway / Operto list | none>
+  Ops:        <Turno / Breezeway list | none>
   Named comps: <AirROI (native currency) | none>
 ```
 
@@ -689,10 +688,9 @@ Tools: `pricelabs_list_listings`, `pricelabs_get_listing`, `pricelabs_get_listin
 - **Multi-property mapping:** all the data tools are single-listing and need a `listing_id`. Call `list_properties` FIRST to map each PMS property to its RankBreeze `listing_id` (Airbnb-listing-scoped, NOT the PMS property UUID), then loop the per-listing tools. No match for a property → manual ranking check for that one property; never block.
 - Use for ranking position, page-view/visibility signal, and the "check ranking FIRST" troubleshooting step. If absent → ranking is a flagged manual check.
 
-### Turno / Breezeway / Operto (ops signals)
+### Turno / Breezeway (ops signals)
 - **Turno:** `turno_list_projects` / `turno_list_bookings` for cleaning/turnover cost. Flag turnover cost as a revenue leak when too many 1-night stays. (Call `turno_check_connection` first.)
 - **Breezeway:** task costs. Rising maintenance explains margin drop even with strong occupancy.
-- **Operto:** unusual unlock patterns worth flagging.
 - Append as an "Operational signals" section at the end of the report.
 
 ### AirROI (named-competitor comps — native local currency) — `mcp__airroi__*`
