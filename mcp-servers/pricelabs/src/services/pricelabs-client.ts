@@ -2,7 +2,7 @@ import axios, { AxiosInstance, AxiosError } from "axios";
 
 const PRICELABS_BASE_URL = "https://api.pricelabs.co";
 
-export function createPriceLabsClient(): AxiosInstance {
+function createPriceLabsClient(): AxiosInstance {
   const apiKey = process.env.PRICELABS_API_KEY;
   if (!apiKey) {
     throw new Error("PRICELABS_API_KEY environment variable is required");

@@ -111,7 +111,8 @@ def list_properties() -> dict:
     ids, seen = [], set()
     for m in re.finditer(r"/rankings/(\d+)", src):
         if m.group(1) not in seen:
-            seen.add(m.group(1)); ids.append((m.start(), m.group(1)))
+            seen.add(m.group(1))
+            ids.append((m.start(), m.group(1)))
     listings = []
     for pos, lid in ids:
         keywords = next((v for p, v in reversed(kw) if p < pos), "").strip()
@@ -200,7 +201,8 @@ def get_calendar_rankings(listing_id: str) -> dict:
     ratings = [float(x) for x in re.findall(r"Avg Rating:\s*([\d.]+)\s*/\s*5", cr)]
     res = {"listing_id": str(listing_id), "cells": len(ranks)}
     if ranks:
-        best = min(ranks, key=lambda r: (r[2], r[0])); worst = max(ranks, key=lambda r: (r[2], r[0]))
+        best = min(ranks, key=lambda r: (r[2], r[0]))
+        worst = max(ranks, key=lambda r: (r[2], r[0]))
         res["best"] = {"position": best[0], "of": best[1], "page": best[2]}
         res["worst"] = {"position": worst[0], "of": worst[1], "page": worst[2]}
     if prices:

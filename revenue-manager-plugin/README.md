@@ -39,7 +39,7 @@ These make the report richer when they're connected. If they're absent, the skil
 |---|---|
 | **RankBreeze** (`mcp__rankbreeze__*`) | Ranking / visibility — the visibility spoke of the flywheel. When absent, ranking is flagged as a manual check. |
 | **Ops MCPs** — Turno (`mcp__turno__*`), Breezeway, Operto | Turnover cost + operational signals (turnover-cost leak on too many 1-night stays, etc.) |
-| **AirROI** | Named-competitor comps — a richer qualitative comp layer on top of PriceLabs' aggregate neighborhood data. **USD-only**: its figures are currency-converted or clearly flagged, never silently mixed into a non-USD recommendation, and never used to contradict PriceLabs without explanation. (Python client, not an MCP yet.) |
+| **AirROI** | Named-competitor comps — a richer qualitative comp layer on top of PriceLabs' aggregate neighborhood data. Returns figures in **native local currency** by default (`currency=native` — CAD for Canadian markets, etc.), normally matching your PMS/PriceLabs; the currency gate verifies it and never silently mixes currencies or contradicts PriceLabs without explanation. Covers Canada + international markets. (Now a proper MCP, `mcp__airroi__*`.) |
 
 ---
 
@@ -50,7 +50,7 @@ Every recommendation runs through a hardened safety layer. This is what makes it
 1. **Floor / ceiling per listing.** Defaults to each listing's existing PriceLabs min/max (read live), stored in `property_config`. It never silently recommends outside your floor or ceiling — if a rec wants to break a bound, it surfaces it and asks whether you want to change the *bound*. You can override bounds in plain English and it persists.
 2. **Max-delta guardrail.** A single recommended change can't move a price more than **25%** from its current value by default (configurable per property). Bigger moves aren't hidden — they're flagged "large move — confirm."
 3. **Thin-comp transparency.** You always get a number, even when comps are thin. When the comp count is below ~20, it shows the count and flags lower confidence in plain language. No hard refusals — always estimate, always show N.
-4. **Currency gate.** It auto-detects each property's native currency. A figure in another currency (e.g. AirROI's USD) can never enter a recommendation or approval without explicit conversion. On a mismatch it converts or flags — never silently mixes.
+4. **Currency gate.** It auto-detects each property's native currency. A figure in another currency (e.g. an AirROI comp whose currency differs from the property's) can never enter a recommendation or approval without explicit conversion. On a mismatch it converts or flags — never silently mixes.
 5. **Explanatory confidence.** No bare "LOW CONFIDENCE" badges. Every rec states its inputs in plain English — e.g. *"based on 23 comps (8 same-bedroom); market median $X; your forward occupancy Y%"* — so you can calibrate for yourself.
 6. **Human-approval-only — never auto-write.** v1 is recommend-only. There is **no** silent push to PriceLabs or your PMS. The approval gate shows current price, recommended price, nearest bound, comp count, currency, and the reasoning, and flags anomalies before you say yes.
 7. **Freshness.** It never presents a rec on stale or unknown data without saying so — it surfaces PriceLabs' `last_refreshed_at` and calendar recency.
@@ -196,7 +196,6 @@ You can adjust bounds or the max-delta in plain English any time — it persists
 ## Roadmap (v2 — not built yet)
 
 - **Other-pricing-tool auto-setup + first-run discovery audit** — for operators on Wheelhouse / Beyond, auto-configure the tool and run a first-run discovery audit into a reference file.
-- **AirROI as a real MCP** — promote the named-competitor comp layer from a Python client to a first-class MCP.
 - **Closed learning loop** — use the new `pricing_decisions` outcome columns (`booked_at`, `lead_time_days`, `price_delta_from_rec`) to learn which recommendations actually booked and feed that back into future recs.
 
 ---

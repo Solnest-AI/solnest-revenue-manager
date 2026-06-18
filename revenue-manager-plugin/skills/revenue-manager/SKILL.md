@@ -93,10 +93,10 @@ These are **never hard dependencies and never sit in a critical path.** If they'
 | Turno | `mcp__turno__*` (e.g. `turno_list_projects`, `turno_list_bookings`) | Turnover cost / ops signal — flags turnover cost as a revenue leak on too many 1-night stays. |
 | Breezeway | `breezeway_` | Maintenance/task cost — explains margin drops even with strong occupancy. |
 | Operto | `operto_` | Ops signals (unusual unlock patterns, etc.). |
-| AirROI | `mcp__airroi__*` (`get_estimate`, `get_comparables`, `get_listing`, `get_listing_metrics`, `health_check`) | **Named-competitor** qualitative comp layer on top of PriceLabs' aggregate neighborhood data. **USD-only** — hard currency caveat below. |
+| AirROI | `mcp__airroi__*` (`get_estimate`, `get_comparables`, `get_listing`, `get_listing_metrics`, `health_check`) | **Named-competitor** qualitative comp layer on top of PriceLabs' aggregate neighborhood data. Returns **native local currency** (`currency=native`) — normally matches your market; currency-match check below. |
 
 **AirROI hard caveats (read every time you consider using it):**
-- AirROI is **USD-only**. NEVER let an AirROI USD figure enter a non-USD recommendation or approval without explicit conversion. On any currency mismatch, convert first (with a named live FX source + timestamp, see 2.4) or clearly flag — never silently mix currencies. (Enforced by the Currency gate in Step 2.)
+- AirROI returns **native local currency** — always call it with **`currency=native`** (the connector default), so figures come back in each market's own currency (e.g. CAD for Canadian markets, GBP for the UK), normally matching your PMS/PriceLabs. Do NOT pass raw ISO codes like `cad`/`eur` — the API 400s on those; `native` is the correct value. **Still verify:** read the `currency` field AirROI echoes and confirm it matches the operator's currency. On a genuine mismatch (e.g. a cross-border comp in another currency), convert first (named live FX source + timestamp, see 2.4) or flag-and-exclude — never silently mix currencies. (Enforced by the Currency gate in Step 2.)
 - AirROI is now a **proper MCP** (`mcp__airroi__*`) — detect-and-use exactly like the other enrichment tools. If `mcp__airroi__*` isn't connected, **skip it silently** (PriceLabs neighborhood data is the required comp engine; AirROI only enriches). Never hard-code a personal absolute path.
 - AirROI is the **qualitative** comp layer (named competitors a guest would actually compare). **PriceLabs neighborhood data remains the quantitative comp engine.** If AirROI ever contradicts PriceLabs, NEVER override PriceLabs silently — surface the disagreement and explain it.
 
@@ -110,7 +110,7 @@ Open your first response with:
   Supabase:   <MCP | REST-env | ❌ none (audit logging disabled)>
   Ranking:    <RankBreeze | ⚠️ none (ranking = manual check)>
   Ops:        <Turno / Breezeway / Operto list | none>
-  Named comps: <AirROI (USD — convert) | none>
+  Named comps: <AirROI (native currency) | none>
 ```
 
 ### Routing rules
@@ -170,8 +170,8 @@ There is **NO hard refusal for thin comps.** You always estimate.
 ### 2.4 — Currency (auto-detect + hard gate)
 
 - Auto-detect each property's native currency from the PMS (e.g. listing/property currency) and confirm against PriceLabs (neighborhood data is in native currency).
-- **Hard gate:** never let a figure in another currency enter a recommendation or an approval card without explicit conversion. The classic trap is AirROI (USD).
-- **Conversion source + recency are mandatory.** Convert only with a **live FX rate from a named provider** (state the provider + the timestamp you pulled it, e.g. *"converted at 1 USD = 1.37 CAD, exchangerate.host, 2026-06-15 14:02 UTC"*). **If no live FX source is available, do NOT convert** — flag the figure as USD and **exclude it from the numeric recommendation** (keep it as qualitative color only).
+- **Hard gate:** never let a figure in another currency enter a recommendation or an approval card without explicit conversion. Don't assume a source's currency — check what each one reports (AirROI is called with `currency=native` and echoes a `currency` field; confirm it matches the property's currency before using).
+- **Conversion source + recency are mandatory.** Convert only with a **live FX rate from a named provider** (state the provider + the timestamp you pulled it, e.g. *"converted at 1 USD = 1.37 CAD, exchangerate.host, 2026-06-15 14:02 UTC"*). **If no live FX source is available, do NOT convert** — flag the figure with its actual currency and **exclude it from the numeric recommendation** (keep it as qualitative color only).
 - On any mismatch: convert with a named, timestamped rate, OR flag-and-exclude. **Never silently mix.** A recommendation that mixes currencies is invalid; do not present it.
 
 ### 2.5 — Explanatory confidence (state your inputs, don't slap on a badge)
@@ -398,7 +398,7 @@ A comp is a property **a guest would realistically choose instead of yours.** Th
 
 Reading comp data — for each comp compare ADR, occupancy, revenue (= ADR × occ, the ultimate comparison), reviews, photos.
 
-**Map to tools:** PriceLabs neighborhood data = the **aggregate** comp engine (percentiles, market occ, STLY). **AirROI (optional) = the named, qualitative** layer — specific competitors a guest would compare. Remember AirROI is USD-only (currency gate 2.4) and never overrides PriceLabs silently.
+**Map to tools:** PriceLabs neighborhood data = the **aggregate** comp engine (percentiles, market occ, STLY). **AirROI (optional) = the named, qualitative** layer — specific competitors a guest would compare. Remember AirROI returns native local currency (called with `currency=native`; verify the echoed currency per gate 2.4) and never overrides PriceLabs silently.
 
 ### 6.6 — The 30-Day Daily Review (the core habit — 6 steps)
 
@@ -678,9 +678,9 @@ Tools: `pricelabs_list_listings`, `pricelabs_get_listing`, `pricelabs_get_listin
 - Base URL: `https://api.usewheelhouse.com/ss_api/v1/` · Auth: `X-User-API-Key`
 - Uses "custom rates" instead of "DSOs". Demand Signal endpoint = richer market data (separate `IntegrationApiKey`).
 
-### Beyond (optional / pluggable, partner-only)
-- Often the PMS calendar already contains Beyond's pushed prices — read from the PMS side.
-- Direct Beyond MCP tools typically limited to listing sync + price push.
+### Beyond (optional / pluggable — self-serve Partners API)
+- A Beyond MCP is built from the **Partners API** (`developers.beyondpricing.com`, JSON:API, self-serve **Personal Access Token** `bpat_…`) — see `build-pricing-ops-mcp.md`. It exposes listings, the price + availability calendar, compsets, Beyond's recommendations, and per-listing customizations (base/min/max price, min/max stay, fees, time-based adjustments) — writes behind a confirm gate.
+- Often the PMS calendar already contains Beyond's pushed prices, so you can also read from the PMS side.
 
 ## Optional enrichment reference (detect-and-use; never a critical path)
 
@@ -695,10 +695,10 @@ Tools: `pricelabs_list_listings`, `pricelabs_get_listing`, `pricelabs_get_listin
 - **Operto:** unusual unlock patterns worth flagging.
 - Append as an "Operational signals" section at the end of the report.
 
-### AirROI (named-competitor comps — USD-only) — `mcp__airroi__*`
-- MCP tools: `get_comparables` (≤25 named comps w/ TTM revenue/ADR/occ/ratings), `get_estimate` (revenue projection + percentiles + comps), `get_listing` (full listing detail), `get_listing_metrics` (monthly occ/ADR/rev/RevPAR), `health_check`. If `mcp__airroi__*` isn't connected, **skip silently** — it only enriches PriceLabs, never required. (Setup: drag in the `airroi-mcp` package, add a free AirROI key, restart Claude Code.)
+### AirROI (named-competitor comps — native local currency) — `mcp__airroi__*`
+- MCP tools: `get_comparables` (≤25 named comps w/ TTM revenue/ADR/occ/ratings), `get_estimate` (revenue projection + percentiles + comps), `get_listing` (full listing detail), `get_listing_metrics` (monthly occ/ADR/rev/RevPAR), `health_check`. If `mcp__airroi__*` isn't connected, **skip silently** — it only enriches PriceLabs, never required. (Setup: it's a bundled MCP at `mcp-servers/airroi/` — build the venv, add a free AirROI key, register, restart Claude Code.)
 - Use for the **qualitative** named-competitor comp layer ON TOP of PriceLabs' aggregate neighborhood data.
-- **USD-only:** never let its figures enter a non-USD recommendation/approval without conversion (currency gate 2.4 — named live FX source + timestamp, or flag-and-exclude). Never contradict PriceLabs silently — if they disagree, surface and explain.
+- **Native currency:** call with `currency=native` so figures return in each market's local currency (normally matching your PMS/PriceLabs). Verify the echoed `currency` field; on a genuine mismatch convert (named live FX + timestamp, gate 2.4) or flag-and-exclude — never silently mix. Never contradict PriceLabs silently — if they disagree, surface and explain.
 
 ## Key Rules
 
@@ -712,7 +712,7 @@ Tools: `pricelabs_list_listings`, `pricelabs_get_listing`, `pricelabs_get_listin
 - **Never recommend outside floor/ceiling silently** — surface it and offer to change the bound.
 - **Default max-delta 25%** — bigger moves are flagged "large move — confirm," never hidden.
 - **Always produce a number, even on thin comps** — show N and flag lower confidence in plain words. No hard refusal.
-- **Never mix currencies** — convert with a named live FX rate + timestamp, or flag-and-exclude (the AirROI USD trap).
+- **Never mix currencies** — AirROI is called with `currency=native` (matches your market in the normal case); verify the echoed currency and on any genuine mismatch convert with a named live FX rate + timestamp, or flag-and-exclude.
 - **State your inputs as the confidence signal** — no bare "LOW CONFIDENCE" badges.
 - **Never present stale/unknown-freshness data without saying so** — >24h old or unknown = directional, and always state the age.
 - All prices in the property's native currency unless explicitly converted.

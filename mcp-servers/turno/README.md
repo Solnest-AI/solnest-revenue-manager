@@ -4,7 +4,7 @@ An [MCP](https://modelcontextprotocol.io) server that wraps the **Turno External
 
 One tool per Turno endpoint (~47) across Projects, Properties, Cleaners, Bookings, Assignments, Blocked Dates, Problems, Checklists, Reviews, and Webhooks. Built with [FastMCP](https://github.com/jlowin/fastmcp) + `httpx`, managed by `uv`.
 
-> 📖 **[`docs/API-REFERENCE.md`](docs/API-REFERENCE.md)** — full endpoint map, real response shapes, and a field cheat-sheet (e.g. property name = `alias`, clean date = project `start`, the `"booking "` key has a trailing space). Look here first instead of probing the API.
+> 📖 **Turno field cheat-sheet** — response-shape gotchas worth knowing: property name = `alias`, clean date = project `start`, and the `"booking "` key has a trailing space. (The bundled server already handles these for you.)
 
 ## Requirements
 
@@ -47,7 +47,7 @@ uv run turno-mcp        # serves over stdio
   "mcpServers": {
     "turno": {
       "command": "uv",
-      "args": ["--directory", "/Users/ryan_/Documents/Claude Code Repo/Turno MCP", "run", "turno-mcp"],
+      "args": ["--directory", "/ABSOLUTE/PATH/TO/mcp-servers/turno", "run", "turno-mcp"],
       "env": {
         "TURNO_API_TOKEN": "your_bearer_jwt",
         "TURNO_PARTNER_ID": "your_partner_uuid",

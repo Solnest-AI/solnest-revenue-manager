@@ -42,8 +42,8 @@ Registered globally (user scope) so it loads in every project:
 
 ```bash
 claude mcp add rankbreeze --scope user -- \
-  ~/.claude/mcp-servers/rankbreeze/.venv/bin/python \
-  ~/.claude/mcp-servers/rankbreeze/server.py
+  "<this-folder>/.venv/bin/python" \
+  "<this-folder>/server.py"
 ```
 
 Restart Claude Code after registering. Remove with `claude mcp remove rankbreeze`.

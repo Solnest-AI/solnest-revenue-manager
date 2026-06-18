@@ -174,7 +174,7 @@ Have these ready before you start (Claude checks them, but it's faster if they'r
 - A login for your **PMS** (Hospitable, Hostaway, Guesty, Hostfully, OwnerRez, Lodgify, Uplisting, or Smoobu).
 - A login for your **pricing tool** (PriceLabs, Wheelhouse, or Beyond).
 - A **free Supabase account** — sign up at [supabase.com](https://supabase.com), no card needed for the free tier.
-- **AirROI** is optional and free — if you want the named-competitor comp layer, grab a free developer key at [airroi.com/api/developer/activate](https://www.airroi.com/api/developer/activate) (note: AirROI is USD-only).
+- **AirROI** is optional and free — if you want the named-competitor comp layer, grab a free developer key at [airroi.com/api/developer/activate](https://www.airroi.com/api/developer/activate) (note: AirROI returns each market's native local currency — e.g. CAD for Canadian markets — and covers Canada + international markets, not just the US).
 
 You supply your own keys, locally, during setup. See the note below.
 
