@@ -6,7 +6,7 @@ You don't need to be technical. You open Claude Code, drag this folder in, and s
 
 Everything you need is **already in this folder.** There's nothing to go grab from somewhere else, no other tool to install first, no separate download. One bundle, start to finish.
 
-> 📺 **Walkthrough video — coming shortly.** A five-minute Loom showing the whole thing end to end is on the way. You don't need it to start — `SETUP.md` is fully self-contained and walks you through every step.
+> 📺 **[Watch the 5-minute walkthrough](https://www.loom.com/share/738aa85f18144db08004ed9c144df92a)** — the whole thing end to end. You don't need it to start — `SETUP.md` is fully self-contained and walks you through every step.
 
 ---
 

@@ -1,14 +1,12 @@
 <!--
-  PUBLISHER NOTE — Skool link is filled. ONE token still to swap once recorded:
-    [Loom] → the walkthrough video URL (top of this file + README.md). Currently a soft "coming shortly"
-    placeholder so nothing looks broken on the public repo; replace it with the real Loom URL when ready.
+  PUBLISHER NOTE — Skool link + Loom walkthrough are both filled in. No remaining placeholders.
   This is a self-contained folder: everything the operator needs is already inside it. There is NO external repo to fetch,
   NO suite to grab from, and NO personal tools/paths referenced anywhere. Keep it that way.
 -->
 
 # Revenue Manager — One-Shot Setup
 
-> **🎥 Walkthrough video — coming shortly.** A 5-minute Loom showing the whole flow end-to-end is on the way. You don't need it to begin — the steps below are fully self-contained.
+> **🎥 [Watch the 5-minute setup walkthrough](https://www.loom.com/share/738aa85f18144db08004ed9c144df92a).** It shows the whole flow end-to-end. You don't need it to begin — the steps below are fully self-contained.
 
 Welcome 👋 This is the **single entry point** for setting up your STR Revenue Manager. It connects four things — your **PMS**, your **pricing tool (PriceLabs)**, a **Supabase audit database**, and the **Revenue Manager plugin** — then does a first run so you can see it working. You'll do this once, solo, before the event. Then at the event we help you actually *run* it on your real listings and tune it.
 
