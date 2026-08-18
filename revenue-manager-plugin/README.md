@@ -102,7 +102,7 @@ Reads happen every run (for historical context). Writes happen **only when a cha
 
 - [Claude Code](https://claude.ai/code) installed
 - **One PMS MCP** + **the PriceLabs MCP** installed and connected
-- **One Supabase project** with the audit tables created (both migrations below)
+- **One Supabase project** — free tier, no card. You do **not** need to create any tables yourself; the skill does it on first run (see below).
 - Node.js 18+ for MCP servers
 
 ### Don't have MCPs yet?
@@ -116,29 +116,75 @@ Use the companion installer files to set them up (ask your community admin for t
 
 ## Installation
 
-### Step 1 — Create the Supabase tables (run BOTH migrations, in order)
+### Step 1 — Get a Supabase project (free, about 3 minutes)
 
-1. Create (or pick) a Supabase project at [supabase.com](https://supabase.com).
-2. Go to **SQL Editor → New query**.
-3. Run **`migrations/001_revenue_tables.sql`** first — creates the 4 tables + trigger.
-4. Then run **`migrations/002_outcome_columns.sql`** — adds the three nullable outcome columns to `pricing_decisions` (`booked_at`, `lead_time_days`, `price_delta_from_rec`) that seed the future learning loop.
+Supabase is where your pricing history lives so it compounds run over run. The free tier is
+plenty and it does not ask for a card.
 
-Both are included in this plugin. You need both — 001 creates the schema, 002 hardens it for outcome tracking.
+**Start from nothing? Do exactly this:**
+
+1. Go to **[supabase.com](https://supabase.com)** and click **Start your project**. Sign up with
+   GitHub or email.
+2. Click **New project**. Pick your org, give it a name (`revenue-manager` is fine), and choose a
+   region close to you.
+3. It generates a **database password**. Save it in your password manager. You will not need it
+   for this plugin, but losing it is annoying later.
+4. Wait about two minutes while it provisions. When the dashboard goes green, it's ready.
+
+**You are done. Do not open the SQL Editor. Do not run any migrations by hand.**
+The skill creates all four tables for you on its first run (see Step 3).
 
 ### Step 2 — Connect Supabase to Claude Code
 
-Two options — either works, the skill auto-detects:
+Two options, either works, the skill auto-detects whichever you have.
 
-**Option A (Recommended) — Supabase MCP**
-Install the official Supabase MCP server in Claude Code and connect your project. The skill uses the MCP tools directly (`list_tables`, `execute_sql`, `apply_migration`).
+**Option A (Recommended) — the Supabase MCP**
 
-**Option B — REST API Fallback**
+1. Create a personal access token: **[supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens)**
+   → **Generate new token** → copy it.
+2. Register the server (user scope):
+   ```bash
+   claude mcp add supabase --scope user -- npx -y @supabase/mcp-server-supabase@latest
+   ```
+3. Put the token in your MCP config as `SUPABASE_ACCESS_TOKEN`. **Never paste a token into the
+   chat window.**
+4. **Fully quit and reopen Claude Code.** MCP servers only load at startup.
+
+> ⚠️ **Do not add `--read-only`.** A read-only server can read your history but cannot create the
+> tables or write the audit trail, so the plugin silently drops to analysis-only. If you already
+> registered it read-only, re-register it without that flag and restart.
+
+**Option B — REST API fallback**
+
 Add to your project's `.env`:
 ```env
 SUPABASE_URL=https://<your-project>.supabase.co
 SUPABASE_SERVICE_KEY=eyJhbGciOi...   # Supabase → Project Settings → API → service_role key
 ```
-The skill calls Supabase REST directly with curl.
+Use the **`service_role`** key, not the `anon` key. The `anon` key cannot create tables. The skill
+calls Supabase REST directly with curl.
+
+### Step 2.5 — The tables (automatic, nothing for you to do)
+
+On its first run the skill checks your project, sees an empty database, and applies both
+migrations itself:
+
+| Table | What it holds |
+|---|---|
+| `property_config` | Per-property bounds, markup, targets, seasons |
+| `pricing_decisions` | Every recommendation, with the reasoning behind it |
+| `pricelabs_change_log` | Every approved change actually pushed |
+| `market_snapshots` | Point-in-time comp and demand data |
+
+It reports one line (`🗄️ Audit schema: created 4 tables (first run)`) and carries on. Both
+migrations are idempotent, so this is safe on every later run too.
+
+**Prefer to run them yourself?** You can. Open **SQL Editor → New query** and run
+`migrations/001_revenue_tables.sql`, then `migrations/002_outcome_columns.sql`. The skill will
+detect they already exist and skip ahead.
+
+**No Supabase at all?** The plugin still runs. You get the full pricing analysis, you just lose
+the compounding history, and it tells you so at the end.
 
 ### Step 3 — Install the plugin
 

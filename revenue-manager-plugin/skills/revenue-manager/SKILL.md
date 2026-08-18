@@ -80,8 +80,10 @@ Before anything else, scan the available MCP tools in the current session and id
 
 | | Check |
 |---|---|
-| Supabase MCP | look for `mcp__supabase__execute_sql` / `mcp__supabase__list_tables` |
+| Supabase MCP | look for **any** Supabase MCP, not one fixed prefix: `mcp__supabase__*`, a named/scoped server like `mcp__supabase-<name>__*`, or the connector flavour `mcp__claude_ai_Supabase__*`. The tools that matter are `list_tables`, `execute_sql`, and (if present) `apply_migration`. A project-scoped server with no `list_projects` is still a fully working setup. |
+| Writable? | The schema bootstrap in Step 3.0 needs **write** permission. A server registered with `--read-only`, or keyed with the `anon` key instead of `service_role`, will read fine and fail every `CREATE`/`INSERT`. Don't pre-judge it — find out in Step 3.0 and degrade there. |
 | REST fallback | check for `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` in `.env` |
+| Nothing at all | Supabase is optional. Skip Step 3 entirely, disable audit logging, run the full analysis anyway, and point them at **Phase 3 of `SETUP.md`** to add it later. |
 
 ### Optional enrichment detection (auto-detect → use if present → degrade gracefully if absent)
 
@@ -205,23 +207,35 @@ Then **wait for explicit approval** of which changes to push. Flag any anomaly o
 
 ### 2.8 — Audit columns (seed the future learning loop)
 
-The four Supabase tables ship with migration 001. The three nullable outcome columns on `pricing_decisions` (`booked_at`, `lead_time_days`, `price_delta_from_rec`) ship in migration 002 and seed a future learning loop (do NOT build the loop in v1 — that's v2). Step 3 runs an idempotent `ADD COLUMN IF NOT EXISTS` pre-flight so the historical read never errors even if 002 wasn't applied. These columns stay null until a future loop populates them. Writes still only fire on real, approved changes — never on read-only analysis.
+The four Supabase tables ship with migration 001. The three nullable outcome columns on `pricing_decisions` (`booked_at`, `lead_time_days`, `price_delta_from_rec`) ship in migration 002 and seed a future learning loop (do NOT build the loop in v1 — that's v2). Step 3.0 runs an idempotent **schema bootstrap** (creates the tables if they're missing, then adds the outcome columns) so the historical read never errors — not on a brand-new empty Supabase project, and not on an install that only ever ran 001. These columns stay null until a future loop populates them. Writes still only fire on real, approved changes — never on read-only analysis.
 
-## Step 3 — Historical read from Supabase (runs every time)
+## Step 3 — Schema bootstrap + historical read (runs every time)
 
-Before doing anything new, read everything the skill has previously learned about this property set. The value compounds.
+### 3.0 — Bootstrap the schema FIRST (idempotent, before any read)
 
-**Pre-flight (idempotent — run BEFORE the SELECTs, every time).** This guarantees the outcome columns exist even on an install that only ran migration 001, so the read below can't throw "column does not exist":
+**Never assume the audit tables exist.** Most operators arrive with a brand-new, completely empty Supabase project. `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` does **not** save you there — the `IF NOT EXISTS` guards the *column*, not the *table*, so it still throws `relation "pricing_decisions" does not exist`. Create first, then read, every single run.
 
-```sql
-ALTER TABLE pricing_decisions ADD COLUMN IF NOT EXISTS booked_at date;
-ALTER TABLE pricing_decisions ADD COLUMN IF NOT EXISTS lead_time_days integer;
-ALTER TABLE pricing_decisions ADD COLUMN IF NOT EXISTS price_delta_from_rec numeric;
-```
+1. **Look:** call `list_tables` (or `SELECT tablename FROM pg_tables WHERE schemaname = 'public';`) and check for the four audit tables: `property_config`, `pricing_decisions`, `pricelabs_change_log`, `market_snapshots`.
+2. **Create what's missing:** apply `migrations/001_revenue_tables.sql` from this plugin's folder, then `migrations/002_outcome_columns.sql`. Read the files off disk and apply them **verbatim** — never retype the SQL from memory. Both are fully idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, `DROP TRIGGER IF EXISTS`, guarded policy creation), so running them against an existing install is a harmless no-op.
+   - Prefer `apply_migration` when the Supabase MCP exposes it — it records migration history. Otherwise `execute_sql`. Otherwise the REST fallback.
+3. **If all four already exist:** still apply `002`. It's three `ADD COLUMN IF NOT EXISTS` statements, costs nothing, and guarantees the outcome columns on an install that only ever ran 001.
+4. **Say what you did, in one line.** `🗄️ Audit schema: created 4 tables (first run)` or `🗄️ Audit schema: verified`.
 
-(If Supabase is connected read-only and the ALTER isn't permitted, fall back to `SELECT *` on `pricing_decisions` and tolerate the columns being absent — never let a missing outcome column abort the run.)
+**If the bootstrap fails, never abort the run.** Classify it, degrade, and keep going — the pricing analysis does not depend on Supabase:
 
-Then run these in parallel (Supabase MCP or REST):
+| Symptom | What it actually means | What you do |
+|---|---|---|
+| `permission denied`, `read-only transaction`, or CREATE silently refused | The Supabase MCP was registered with `--read-only`, or it's keyed with the `anon` key instead of `service_role` | Warn **once**, set audit logging = disabled, run the full analysis. Give them the exact fix: re-register the Supabase MCP **without** `--read-only` (or swap in the `service_role` key), then fully restart Claude Code. |
+| `relation does not exist` still, right after a bootstrap that looked fine | Connected to a different project than they think | Warn, disable audit, and **name the project ref you're actually connected to** so they can spot the mismatch |
+| No Supabase tools in the session at all | Not connected (it's optional) | Skip 3.0 and 3.1 entirely, disable audit, continue. Mention Phase 3 of `SETUP.md` once, at the end, not as a blocker. |
+
+**A first run returns four empty tables. That is the correct, expected state — it is not an error and not a reason to stop.** Say it plainly (*"First run, so there's no history yet. This run becomes your baseline."*) and go straight to Step 4. Never present an empty history as a failure, never ask permission to continue past it.
+
+### 3.1 — Historical read
+
+Now read everything the skill has previously learned about this property set. The value compounds run over run.
+
+Run these in parallel (Supabase MCP or REST):
 
 ```sql
 -- 1. Every prior pricing decision (all time) — now includes outcome columns
@@ -581,7 +595,9 @@ ON CONFLICT (property_id) DO UPDATE SET
 Skip the writes. At the end of the report, print:
 ```
 ⚠️ Audit logging skipped — Supabase not connected.
-   To enable: follow the Supabase setup in the plugin README (apply BOTH 001 and 002 migrations).
+   To enable: follow the Supabase setup in the plugin README (Phase 3 of SETUP.md).
+   You do NOT need to run any SQL by hand — connect a writable Supabase MCP and
+   the skill creates all 4 tables itself on the next run (Step 3.0).
 ```
 
 ## Optional — Owner Report output (Lead with wins → Context → Honest → Plan)
