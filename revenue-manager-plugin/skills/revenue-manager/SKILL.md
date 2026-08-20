@@ -290,8 +290,8 @@ If `property_config` is empty for a property, flag it — you'll recommend a set
 >
 > ```bash
 > cd <plugin>/skills/revenue-manager/fetch
-> python3 reduce_prices.py --all --tier b                    # portfolio scan
-> python3 reduce_prices.py --listings <id>:<pms> --tier a    # working one listing
+> python3 reduce_prices.py --all                             # Tier A, the default
+> python3 reduce_prices.py --all --tier b                    # rollup only, if you want it
 > python3 reduce_prices.py --listings <id>:<pms> --reason-dates 2026-09-01,2026-09-02
 > ```
 >
@@ -299,7 +299,7 @@ If `property_config` is empty for a property, flag it — you'll recommend a set
 >
 > **A listing that returns no data is reported, never skipped.** A listing with sync toggled off comes back as an error with no date rows. The reducer prints it above the tables. Treat those properties as unmanaged and say so in the report.
 >
-> **Escalate tiers, don't start wide.** Tier B for the portfolio scan; Tier A only for the listings Tier B flagged; `--reason-dates` only for the specific dates you are about to recommend a change on. `reason` is the expensive field — fetch it per decision, never per horizon.
+> **Tier A is the default and is what you should use.** It is 72x smaller than the raw pull and keeps every per-date field the framework needs. Tier B exists for a fast portfolio glance but cannot support orphan-gap detection, min-stay laddering, or day-of-week analysis, all of which need per-date rows. Use `--reason-dates` only for the specific dates you are about to recommend a change on; `reason` is the expensive field, so fetch it per decision, never per horizon.
 >
 > The script needs `PRICELABS_API_KEY` (env or the pricelabs connector's `.env`). Direct calls to `api.pricelabs.co` return 403 without a browser-like `User-Agent`; the script sets one. If the script is unavailable, fall back to the MCP but **cap the window at 90 days and leave `reason` false**, and say in the report that the horizon was shortened.
 >

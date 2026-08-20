@@ -391,7 +391,7 @@ def main() -> None:
     ap.add_argument("--listings", help="id:pms[,id:pms...]")
     ap.add_argument("--all", action="store_true", help="every listing on the account")
     ap.add_argument("--days", type=int, default=365)
-    ap.add_argument("--tier", choices=["a", "b", "both"], default="b")
+    ap.add_argument("--tier", choices=["a", "b", "both"], default="a")
     ap.add_argument("--reason-dates", help="comma-separated YYYY-MM-DD; pulls reason for these only")
     ap.add_argument("--gap-pct", type=float, default=12.0, help="exception threshold (default 12)")
     ap.add_argument("--cache-dir", default=".pl_cache")
@@ -482,7 +482,10 @@ def main() -> None:
                        f"(gap >= {args.gap_pct:g}%)")
             mline = f"[metrics] {metrics_line(metrics[lid])}\n" if lid in metrics else ""
             out_parts.append(f"{header}\n{summary}\n{mline}\n[months]\n{roll}\n[exceptions]\n{exc}")
-        if args.tier in ("a", "both"):
+        if args.tier == "a":
+            mline = f"[metrics] {metrics_line(metrics[lid])}\n" if lid in metrics else ""
+            out_parts.append(f"{header}\n{mline}[per-date]\n{tier_a(rows)}")
+        elif args.tier == "both":
             out_parts.append(f"{header}\n[per-date]\n{tier_a(rows)}")
 
     if listing_errors:
