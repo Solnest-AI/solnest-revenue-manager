@@ -273,6 +273,38 @@ If `property_config` is empty for a property, flag it — you'll recommend a set
 
 ## Step 4 — Parallel pull (spawn in one message with two Agent calls)
 
+> ### 4.0 — Pull prices through the reducer, never through the raw MCP
+>
+> **`pricelabs_get_listing_prices` must not be called directly for a full horizon.** The connector returns `JSON.stringify(data, null, 2)`, and that return value lands in context verbatim — the cost is paid the moment the tool is called, and no amount of post-processing gets it back. Measured on one live listing over 366 forward dates:
+>
+> | what you ask for | tokens in context |
+> |---|---|
+> | 365d **with** `reason` (the naive call) | **~461,800** |
+> | 365d without `reason` | ~53,900 |
+> | Tier A — per-date CSV, useful fields only | **~4,450** |
+> | Tier B — month rollup + exception rows | **~200** |
+>
+> `reason` alone is **87.7%** of the per-date payload. A seven-listing portfolio pulled the naive way is ~3.2M tokens and does not fit in a 1M context window; the same portfolio through Tier B is ~1,500 tokens.
+>
+> Use `skills/revenue-manager/fetch/reduce_prices.py`. It fetches over plain HTTP, caches the raw JSON to disk, and prints only the reduced table:
+>
+> ```bash
+> cd <plugin>/skills/revenue-manager/fetch
+> python3 reduce_prices.py --all --tier b                    # portfolio scan
+> python3 reduce_prices.py --listings <id>:<pms> --tier a    # working one listing
+> python3 reduce_prices.py --listings <id>:<pms> --reason-dates 2026-09-01,2026-09-02
+> ```
+>
+> **Escalate tiers, don't start wide.** Tier B for the portfolio scan; Tier A only for the listings Tier B flagged; `--reason-dates` only for the specific dates you are about to recommend a change on. `reason` is the expensive field — fetch it per decision, never per horizon.
+>
+> The script needs `PRICELABS_API_KEY` (env or the pricelabs connector's `.env`). Direct calls to `api.pricelabs.co` return 403 without a browser-like `User-Agent`; the script sets one. If the script is unavailable, fall back to the MCP but **cap the window at 90 days and leave `reason` false**, and say in the report that the horizon was shortened.
+>
+> **Three field traps the reducer already handles — apply them anywhere else you read this data:**
+> - `booking_status` is `"Booked"` **or** `"Booked (Check-In)"`. Matching only `== "Booked"` undercounts occupancy (measured: 21 vs 35 booked nights of 366 on a live listing, a 40% miss).
+> - Available nights carry an **empty string**, not `"Available"`. An empty `booking_status_STLY` therefore means *either* "was available last year" *or* "the listing did not exist yet" — indistinguishable per row. Resolve it per month: zero populated STLY values means no history, so report **blank**, never `0%`.
+> - `-1` and `-2` are missing-value sentinels (`-2` = no same-time-last-year data). Never let them reach arithmetic.
+
+
 ### Agent 1 — PMS Agent (ground truth for what's actually listed)
 Task: the full reality — one year forward, all history back.
 
@@ -311,7 +343,7 @@ For each property, compute:
 - Number of dates pinned to the min floor (algorithm wants lower) or max ceiling (algorithm is capped — you may be underpriced)
 - **Ask-vs-cleared spread** (calendar/ask vs ADR) — cleared runs materially higher than ask; track both
 
-Parse heavy JSON with python3 into compact tables before reporting.
+Parse heavy JSON with python3 into compact tables before reporting. For PriceLabs prices this is not optional and not manual — use the Step 4.0 reducer (`fetch/reduce_prices.py`), which keeps the raw payload on disk and out of context entirely.
 
 ### Step 4a — PriceLabs neighborhood data = the comp engine (verified live)
 
