@@ -295,6 +295,10 @@ If `property_config` is empty for a property, flag it — you'll recommend a set
 > python3 reduce_prices.py --listings <id>:<pms> --reason-dates 2026-09-01,2026-09-02
 > ```
 >
+> **Tier B carries `listing_metrics` and you must read it.** The reducer folds in PriceLabs' precomputed `min_prices` (percent of nights pinned to the floor), `mpi`, `revpar` vs `stly_revpar`, and `booking_pickup` vs STLY. **A listing sitting at its floor cannot be fixed by cutting price** — PriceLabs has no room to go lower. On a live portfolio, one listing showed 9% forward occupancy with 71% of nights floor-pinned: occupancy alone says "cut and promote", which is the wrong action. Raise the min, or diagnose demand. Always read `floor_pinned%` before recommending a cut.
+>
+> **A listing that returns no data is reported, never skipped.** A listing with sync toggled off comes back as an error with no date rows. The reducer prints it above the tables. Treat those properties as unmanaged and say so in the report.
+>
 > **Escalate tiers, don't start wide.** Tier B for the portfolio scan; Tier A only for the listings Tier B flagged; `--reason-dates` only for the specific dates you are about to recommend a change on. `reason` is the expensive field — fetch it per decision, never per horizon.
 >
 > The script needs `PRICELABS_API_KEY` (env or the pricelabs connector's `.env`). Direct calls to `api.pricelabs.co` return 403 without a browser-like `User-Agent`; the script sets one. If the script is unavailable, fall back to the MCP but **cap the window at 90 days and leave `reason` false**, and say in the report that the horizon was shortened.

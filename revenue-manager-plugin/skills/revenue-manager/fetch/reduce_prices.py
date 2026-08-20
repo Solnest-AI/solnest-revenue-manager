@@ -67,9 +67,14 @@ SENTINELS = {-1, -2, -1.0, -2.0, "-1", "-2"}
 # The only per-date fields any step of the skill actually consumes.
 # Everything else in the payload is carried and never read.
 TIER_A_FIELDS = [
-    "date", "price", "user_price", "min_stay", "booking_status",
-    "ADR", "booking_status_STLY", "ADR_STLY", "occupancy", "unbookable",
+    "date", "price", "user_price", "uncustomized_price", "min_stay",
+    "booking_status", "ADR", "booking_status_STLY", "ADR_STLY",
+    "booked_date", "booked_date_STLY", "demand_desc", "occupancy", "unbookable",
 ]
+# booked_date / booked_date_STLY carry pace at equal lead time; demand_desc is
+# PriceLabs' per-date demand signal; uncustomized_price reveals that a
+# customization moved the price. Dropping them cost 4 of 12 fact classes in the
+# tier evaluation, so they stay even though they widen the CSV ~40%.
 
 BYTES_PER_TOKEN = 3.6  # rough; use count_tokens for anything load-bearing
 
@@ -124,6 +129,46 @@ def call(path: str, key: str, body: dict | None = None, params: str = "") -> dic
         die(f"network error reaching {path}: {exc.reason}")
 
 
+def fetch_metrics(listing_id: str, pms: str, key: str) -> dict | None:
+    """PriceLabs precomputes the numbers Tier B cannot derive from prices alone.
+
+    `min_prices` is the percent of nights pinned to the floor per window -- the
+    single fact whose absence flipped a live verdict from "raise the min" to
+    "cut and promote". Also carries mpi (market penetration), revpar vs
+    stly_revpar, and booking_pickup vs stly. ~8.7 KB raw, reduced to one line.
+    """
+    try:
+        params = f"?listing_id={listing_id}&pms_name={pms}"   # note: pms_name, not pms (pms 400s)
+        data = call("/v1/listing_metrics", key, params=params)
+    except SystemExit:
+        return None
+    node = data
+    for step in ("data", "listing_level"):
+        if isinstance(node, dict) and step in node:
+            node = node[step]
+    return node if isinstance(node, dict) else None
+
+
+def metrics_line(m: dict, window: str = "30") -> str:
+    def pick(field, w=window):
+        v = (m.get(field) or {}).get(w) if isinstance(m.get(field), dict) else m.get(field)
+        return None if v in (None, -1, -2, "-1", "-2") else v
+    bits = []
+    for label, field in (("floor_pinned%", "min_prices"), ("mpi", "mpi"),
+                         ("revpar", "revpar"), ("stly_revpar", "stly_revpar"),
+                         ("adr", "adr")):
+        v = pick(field)
+        if v is not None:
+            bits.append(f"{label}={v}")
+    pu, spu = pick("booking_pickup", "-30"), pick("stly_booking_pickup", "-30")
+    if pu is not None:
+        bits.append(f"pickup30={pu}" + (f" (stly {spu})" if spu is not None else " (no stly)"))
+    fp90 = pick("min_prices", "90")
+    if fp90 is not None:
+        bits.append(f"floor_pinned90%={fp90}")
+    return " | ".join(bits) if bits else "(no metrics)"
+
+
 def num(value) -> float | None:
     """Parse a numeric field, mapping PriceLabs sentinels to None."""
     if value in SENTINELS or value is None or value == "":
@@ -153,21 +198,31 @@ def find_date_rows(payload) -> list[dict]:
     return []
 
 
-def split_payload(payload) -> dict[str, list[dict]]:
-    """Return {listing_id: rows}. Falls back to a single unnamed bucket."""
+def split_payload(payload) -> tuple[dict[str, list[dict]], list[tuple[str, str]]]:
+    """Return ({listing_id: rows}, [(listing_id, error)]).
+
+    A listing whose sync is toggled off comes back as {id, pms, error,
+    error_status} with no date rows. Silently skipping it makes an unmanaged
+    property invisible to the operator -- the raw payload says so, so the
+    reduction must too.
+    """
     out: dict[str, list[dict]] = {}
+    errors: list[tuple[str, str]] = []
     if isinstance(payload, list):
         for entry in payload:
             if isinstance(entry, dict):
-                lid = entry.get("id") or entry.get("listing_id") or f"listing_{len(out)}"
+                lid = str(entry.get("id") or entry.get("listing_id") or f"listing_{len(out)}")
+                if entry.get("error"):
+                    errors.append((lid, str(entry.get("error"))))
+                    continue
                 rows = find_date_rows(entry)
                 if rows:
-                    out[str(lid)] = rows
-    if not out:
+                    out[lid] = rows
+    if not out and not errors:
         rows = find_date_rows(payload)
         if rows:
             out["listing"] = rows
-    return out
+    return out, errors
 
 
 # ---------------------------------------------------------------- reducers
@@ -342,6 +397,8 @@ def main() -> None:
     ap.add_argument("--cache-dir", default=".pl_cache")
     ap.add_argument("--env-file", type=Path)
     ap.add_argument("--refresh", action="store_true", help="ignore cache")
+    ap.add_argument("--no-metrics", action="store_true",
+                    help="skip the listing_metrics pull (floor-pinned pct, MPI, RevPAR vs STLY)")
     args = ap.parse_args()
 
     if not args.listings and not args.all:
@@ -400,9 +457,17 @@ def main() -> None:
     # what the MCP would have put in context: pretty-printed, not compact
     mcp_bytes = len(json.dumps(payload, indent=2))
 
-    by_listing = split_payload(payload)
-    if not by_listing:
+    by_listing, listing_errors = split_payload(payload)
+    if not by_listing and not listing_errors:
         die("no per-date rows found in the response")
+
+    pms_of = {lid: pms for lid, pms in targets}
+    metrics: dict[str, dict] = {}
+    if not args.no_metrics and not want_reason:
+        for lid in by_listing:
+            m = fetch_metrics(lid, pms_of.get(lid, "smartbnb"), key)
+            if m:
+                metrics[lid] = m
 
     out_parts: list[str] = []
     for lid, rows in by_listing.items():
@@ -415,10 +480,15 @@ def main() -> None:
             summary = (f"{totals['nights']} nights, {totals['bookable']} bookable, "
                        f"{totals['blocked']} blocked, {totals['exceptions']} exception dates "
                        f"(gap >= {args.gap_pct:g}%)")
-            out_parts.append(f"{header}\n{summary}\n\n[months]\n{roll}\n[exceptions]\n{exc}")
+            mline = f"[metrics] {metrics_line(metrics[lid])}\n" if lid in metrics else ""
+            out_parts.append(f"{header}\n{summary}\n{mline}\n[months]\n{roll}\n[exceptions]\n{exc}")
         if args.tier in ("a", "both"):
             out_parts.append(f"{header}\n[per-date]\n{tier_a(rows)}")
 
+    if listing_errors:
+        lines = "\n".join(f"  !! {lid}: {err}" for lid, err in listing_errors)
+        out_parts.insert(0, f"### {len(listing_errors)} LISTING(S) RETURNED NO DATA\n{lines}\n"
+                            "These are NOT in the tables below. Treat them as unmanaged until fixed.")
     body_text = "\n".join(out_parts)
     out_tok = len(body_text) / BYTES_PER_TOKEN
     mcp_tok = mcp_bytes / BYTES_PER_TOKEN
