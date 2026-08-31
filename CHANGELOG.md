@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.1.1
+
+- **`setup-keys.sh` / `setup-keys.ps1` no longer clobber each connector's `.env`.** They used to
+  `cp` the root `.env` straight over `mcp-servers/<tool>/.env`, silently deleting any
+  per-connector setting with no line in the root template. The clearest casualty was
+  `TURNO_ENV`: anyone who followed SETUP.md and switched to `production` got reverted to
+  `sandbox` and then read an empty sandbox account believing it was live data. Both scripts now
+  merge — they write only the keys that connector's own `.env.example` declares, only when the
+  root value is non-blank, and never remove a line. Side effect: the PriceLabs key no longer
+  lands in Turno's `.env`, and vice versa.
+- **`TURNO_ENV` added to `.env.template`**, blank by default so it keeps whatever the connector
+  is already set to.
+- **The one-step key path is documented.** `setup-keys.sh`, `KEYS.md` and `.env.template` existed
+  but no markdown file in the repo mentioned them, so everyone was sent down the slower
+  per-connector route. README's "Installing a pre-built connector" now leads with the one-step
+  option, and SETUP.md tells Claude to check before `cp .env.example .env` so it does not
+  overwrite a `.env` the operator already filled.
+- **`KEYS.md` no longer marks optional keys as required.** `TURNO_API_TOKEN`, `TURNO_PARTNER_ID`
+  and `AIRROI_API_KEY` were listed as Required=Yes, contradicting the README and the plugin
+  manifest, which both call Turno, RankBreeze and AirROI optional enrichment. Turno is
+  partner-gated, so that table was telling strangers they needed an account they cannot get.
+- **`KEYS.md` and `.env.template` used `EXA_API_KEY` as the worked example**, a key this product
+  never reads. Replaced with `PRICELABS_API_KEY`.
+- **The Excel export's dependency is stated.** README Prerequisites now says the multi-tab
+  workbook needs `openpyxl`, that the skill installs it into its own local venv on first use,
+  and that it degrades to a folder of CSVs otherwise. Verified both paths against
+  `report/build_workbook.py`.
+
 ## 1.1.0 — plugin 4.1.0
 
 - **Fresh-Supabase fix.** The skill now bootstraps its own schema (Step 3.0). It checks for the

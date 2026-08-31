@@ -14,31 +14,36 @@ Anything you type into the chat is saved in the conversation forever. Put your k
 2. **Paste each key after the `=` sign.** No quotes, no spaces:
 
    ```
-   EXA_API_KEY=abc123xyz
+   PRICELABS_API_KEY=abc123xyz
    ```
    not
    ```
-   EXA_API_KEY = "abc123xyz"
+   PRICELABS_API_KEY = "abc123xyz"
    ```
 
 3. **Save the file.**
 
-4. **Tell Claude "I've filled in the .env"** — and don't paste anything into the chat. Claude runs the setup script, which reads the file and connects everything.
+4. **Run the setup script.** Mac: `bash setup-keys.sh`. Windows: `powershell -File setup-keys.ps1`. It reads your `.env`, reports which keys it found without ever printing them, and copies each key into the connector that needs it. Don't paste anything into the chat.
 
-5. **Fully quit and reopen Claude Code.** It only picks up new keys on startup.
+   *(It merges. Any per-connector setting you already changed by hand, `TURNO_ENV` included, is left alone.)*
+
+5. **Fully quit and reopen Claude Code.** It loads the connectors on startup.
 
 ---
 
 ## The keys you need
+
+Only PriceLabs and Hospitable are required. Turno, AirROI and RankBreeze are enrichment: leave them blank and the pricing analysis still runs, just without the ops, named-competitor comp, and ranking layers. Turno in particular is partner-gated, so most people will not have it on day one.
 
 | Key | What it's for | Required? | Where to get it |
 |---|---|---|---|
 | `PRICELABS_API_KEY` | PriceLabs | Yes | PriceLabs Dashboard -> Settings -> API Details -> Enable |
 | `HOSPITABLE_API_KEY` | Hospitable | Yes | https://my.hospitable.com/apps/api-access |
 | `HOSPITABLE_WEBHOOK_SECRET` | Hospitable webhook secret | Optional | https://my.hospitable.com/apps/api-access |
-| `TURNO_API_TOKEN` | Turno — the long JWT (starts with eyJ) | Yes | Turno partner dashboard |
-| `TURNO_PARTNER_ID` | Turno — the partner UUID | Yes | Turno partner dashboard |
-| `AIRROI_API_KEY` | AirROI (free key) | Yes | https://www.airroi.com/api/developer/activate |
+| `TURNO_API_TOKEN` | Turno — the long JWT (starts with eyJ) | Optional | Turno partner dashboard |
+| `TURNO_PARTNER_ID` | Turno — the partner UUID | Optional | Turno partner dashboard |
+| `TURNO_ENV` | `sandbox` or `production`. Blank keeps the connector's own setting, which is sandbox | Optional | you choose |
+| `AIRROI_API_KEY` | AirROI (free key) | Optional | https://www.airroi.com/api/developer/activate |
 | `RANKBREEZE_SESSION` | RankBreeze session cookie (_godzilla_session) | Optional | app.rankbreeze.com -> DevTools -> Cookies |
 
 ---

@@ -71,6 +71,10 @@ You are the **lead setup engineer** for the Revenue Manager. The person who just
 **The flow — do this for every credential:**
 
 1. **CREATE the file:** `cp .env.example .env` (RankBreeze cookie: `cp session.txt.example session.txt`).
+   **Check first: `cp` overwrites.** If a `.env` already exists in that folder the operator
+   may have used the one-step `setup-keys.sh` path, or set something by hand. Do not clobber
+   it: `[ -f .env ] || cp .env.example .env`, then read which lines are still blank and only
+   walk them through those.
 2. **OPEN the file for them** so they can paste into it — run the OS-appropriate command so it pops open in their editor:
    - macOS: `open -e "<path>/.env"`
    - Windows: `notepad "<path>\.env"`  (or `start "" "<path>\.env"`)

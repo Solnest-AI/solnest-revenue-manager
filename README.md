@@ -162,7 +162,21 @@ By the end you'll have your PMS connected, your pricing tool connected, a Supaba
 
 ### Installing a pre-built connector (the short version)
 
-For any of the five bundled tools, the flow is the same — and Claude does it with you:
+**The one-step option.** Put every key in one place instead of visiting five folders:
+copy `.env.template` to `.env` in this folder, fill it in (see [KEYS.md](KEYS.md) for where
+each key comes from), then run:
+
+```bash
+bash setup-keys.sh          # Windows: powershell -File setup-keys.ps1
+```
+
+It reports which keys it found without ever printing them, and writes each one into the
+connector that needs it. It merges rather than overwrites, so anything you already set by
+hand in a connector's own `.env` (`TURNO_ENV` in particular) survives. You still have to
+build and register each connector, steps 1, 2 and 4 below.
+
+**The long version.** For any of the five bundled tools, the flow is the same — and Claude
+does it with you:
 
 1. `cd mcp-servers/<tool>`
 2. Build it:
@@ -170,7 +184,7 @@ For any of the five bundled tools, the flow is the same — and Claude does it w
    - **Python — Turno:** `uv sync` (Turno uses `uv`).
    - **Python — RankBreeze and AirROI:** `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
    - (The `uv` path and the `venv` + `pip` path are not interchangeable — use the one listed for that tool.)
-3. `cp .env.example .env` and paste **your own key** into the `.env`. (RankBreeze is the one exception — it has no API key. Copy `session.txt.example` to `session.txt` and paste your `_godzilla_session` cookie value in there, or set `RANKBREEZE_SESSION` in the `.env` instead. RankBreeze ships `session.txt.example`, not a ready-made `session.txt`, so you create `session.txt` by copying it first.)
+3. `cp .env.example .env` and paste **your own key** into the `.env`. (Skip this step if you used `setup-keys.sh` above; it already did it.) (RankBreeze is the one exception — it has no API key. Copy `session.txt.example` to `session.txt` and paste your `_godzilla_session` cookie value in there, or set `RANKBREEZE_SESSION` in the `.env` instead. RankBreeze ships `session.txt.example`, not a ready-made `session.txt`, so you create `session.txt` by copying it first.)
 4. Register the connector with Claude Code: `claude mcp add <tool> --scope user -- …`, then **fully restart Claude Code**. The path you pass to `claude mcp add` must be the **absolute path** to wherever the connector folder actually sits on your disk — if you ran it in place, that's this bundle folder. (This is load-bearing: get the path wrong and the connector won't register.)
 5. Verify the tools show up.
 
@@ -187,6 +201,7 @@ Have these ready before you start (Claude checks them, but it's faster if they'r
 - A login for your **PMS** (Hospitable, Hostaway, Guesty, Hostfully, OwnerRez, Lodgify, Uplisting, or Smoobu).
 - A login for your **pricing tool** (PriceLabs, Wheelhouse, or Beyond).
 - A **free Supabase account** — sign up at [supabase.com](https://supabase.com), no card needed for the free tier.
+- **Optional: the Excel export.** The multi-tab workbook needs Python 3 and `openpyxl`. The skill installs `openpyxl` into its own local venv the first time you ask for a workbook, so there is nothing to pre-install. If that install cannot run, you get the same numbers as a folder of CSVs instead of one `.xlsx` — verified, not assumed.
 - **AirROI** is optional and free — if you want the named-competitor comp layer, grab a free developer key at [airroi.com/api/developer/activate](https://www.airroi.com/api/developer/activate) (note: AirROI returns each market's native local currency — e.g. CAD for Canadian markets — and covers Canada + international markets, not just the US).
 
 You supply your own keys, locally, during setup. See the note below.
