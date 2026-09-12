@@ -365,6 +365,64 @@ data['data']['Future Percentile Prices']['Category']    # 25/50/75/90 percentile
 ```
 Pull the comp count here and feed it to the thin-comp transparency guard (2.3). Always report N.
 
+## Step 4.9 — RECONCILE THE PMS AGAINST PRICELABS (blocking gate, runs before any recommendation)
+
+**PriceLabs does not see every booking.** Off-platform reservations, and bookings taken
+under a channel account that is not wired into the PriceLabs sync, come back as plainly
+**AVAILABLE** (`booking_status: ""`, `unbookable: 0`). Not as blocks. Not as errors.
+
+Measured live 2026-09-12 across a 7-listing portfolio, forward 180 days: **54 booked
+nights worth CA$97,083 were invisible to PriceLabs on 4 listings.** One ski chalet read
+0% occupancy for December and January in PriceLabs while the PMS had it 71% and 84%
+booked over Christmas and New Year at CA$1,161 to CA$3,500 a night.
+
+Left unguarded, Step 6's own red-flag table fires *"5+ consecutive unbooked days, drop
+10 to 15%"* and *"comp set fully booked and you are not, match comp pricing"* on
+sold-out peak inventory. That is the single most expensive failure this skill can make.
+
+### The rule
+
+| Source | Is ground truth for |
+|---|---|
+| **PMS calendar** | **availability** (is this night sold) |
+| **PriceLabs** | **price and market** (what should it cost, what are comps doing) |
+
+A date where the **PMS says `RESERVED` and PriceLabs says available is a SYNC DEFECT.**
+It is never an underperforming date. It never enters the discount candidate set.
+
+### How to run it
+
+```bash
+python3 fetch/reconcile_pms.py --days 180 --json .pl_cache/exclusions.json
+```
+
+- Exit **0** = the check ran. Read the report.
+- Exit **2** = the check **could not run** (missing key, API unreachable, PMS ignored the
+  date filter). **Do not proceed to Step 6 on an unverified calendar.** A gate that goes
+  green because it was blind is worse than no gate.
+
+### What to do with the output
+
+1. **Exclude** every date in `exclude_dates_by_listing` from occupancy math, pace math,
+   and every discount recommendation. Those nights are sold.
+2. **Report the defect to the operator by name**, with the listing, the date range, and
+   the PMS note (`"Off the platform"`, `"Owner's Stay"`, a channel name). The fix is in
+   their PMS or channel manager, not in pricing. Say so.
+3. **A listing that is not synced at all** (`"Listing sync is not toggled ON in PriceLabs"`)
+   is **reported, never silently skipped.** It has no pricing data and cannot be analysed.
+4. Recompute occupancy **after** exclusion. A month that looked like 0% is often the
+   strongest month on the books.
+
+### Three field traps this gate already handles (do not re-derive them)
+
+- `booking_status` is `"Booked"` **or** `"Booked (Check-In)"`. Matching `== "Booked"`
+  undercounts a busy month by roughly 40%.
+- `unbookable` is a **separate axis** from `booking_status`. A night can be sold and still
+  report `unbookable: 0`. Checking only `unbookable` misses this entire class of defect.
+- Hospitable's calendar takes `propertyId` (camelCase) but `start_date` / `end_date`
+  (snake_case), and **silently drops unknown keys**, falling back to a ~15-day default
+  window with no error. The gate asserts the echoed range matches the request.
+
 ## Step 5 — Ask vs cleared, ground truth, and EMPIRICAL markup (do not assume)
 
 The PMS calendar price, the PriceLabs recommended price, and realized ADR are three different things. Get them straight before you reason.
