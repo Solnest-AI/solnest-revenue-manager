@@ -359,6 +359,47 @@ try:
 finally:
     _ur.urlopen = _orig
 
+# --- reduce_overrides: per-date override rows collapse into runs, every run checked ------------
+print("\nreduce_overrides + factcheck smoke test\n")
+import reduce_overrides as ro  # noqa: E402
+
+ov_rows = []
+def _ov(d, price=None, ptype=None, min_stay=None, reason=""):
+    ov_rows.append({"date": d, "price": price, "price_type": ptype, "min_stay": min_stay, "reason": reason,
+                    "currency": "CAD", "created_at": "2026-01-01T00:00:00.000Z", "updated_at": "2026-01-01T00:00:00.000Z"})
+for i in range(1, 6):    _ov(f"2026-10-0{i}", "-25", "percent", 1, "Shoulder fall, lowest demand")   # run 1 (reason has a comma)
+for i in range(6, 9):    _ov(f"2026-10-0{i}", "-25", "percent", 1, "Shoulder fall, lowest demand")   # same run continues
+for i in range(10, 13):  _ov(f"2026-10-{i}", "-25", "percent", 1, "Shoulder fall, lowest demand")    # gap on the 9th -> new run
+for i in range(20, 23):  _ov(f"2026-12-{i}", 2500, "fixed", 3, "Christmas peak")                     # fixed price run
+for i in range(1, 4):    _ov(f"2027-02-0{i}", None, None, 4, "")                                     # min-stay only run
+_ov("2026-01-05", "10", "percent", 1, "history")                                                     # in the past: dropped by --today
+ov_fx = {"overrides": ov_rows}
+with tempfile.TemporaryDirectory() as td:
+    env = dict(os.environ, RC_CACHE_DIR=td, PRICELABS_API_KEY="offline-test-key-never-used")
+    os.makedirs(os.path.join(td, "overrides"), exist_ok=True)
+    json.dump({"pulled_at": "2026-09-01T00:00:00+00:00", "listing": "fixture-listing", "pms": "smartbnb", "data": ov_fx},
+              open(os.path.join(td, "overrides", "ov_fixture-_smartbnb.json"), "w"))
+    po = subprocess.run([sys.executable, str(HERE / "reduce_overrides.py"), "--listing", "fixture-listing",
+                         "--today", "2026-09-01", "--ttl-days", "36500"], capture_output=True, text=True, env=env)
+check("overrides reducer exits 0", po.returncode == 0, po.stderr[:200])
+check("four runs (Oct 1-8 contiguous, gap on the 9th splits, fixed, min-stay only), past row dropped", "runs=4" in po.stdout and "dates=17" in po.stdout and "dropped_past=1" in po.stdout, po.stdout[:300])
+check("run row carries the comma reason intact", '"Shoulder fall, lowest demand"' in po.stdout)
+try:
+    ofull = fc.override_facts_full(ov_fx, "2026-09-01")
+    ored = fc.override_facts_reduced(po.stdout)
+    obad = fc.compare(ofull, ored, fc.OVERRIDE_FACTS)
+except Exception as e:  # noqa: BLE001
+    obad = [f"unparseable: {e}"]
+check("all override fact classes preserved (every run's dates, value, type, min-stay, reason)", not obad, "; ".join(obad))
+with tempfile.TemporaryDirectory() as td:
+    env = dict(os.environ, RC_CACHE_DIR=td, PRICELABS_API_KEY="offline-test-key-never-used")
+    os.makedirs(os.path.join(td, "overrides"), exist_ok=True)
+    json.dump({"pulled_at": "2026-09-01T00:00:00+00:00", "listing": "fixture-listing", "pms": "smartbnb", "data": {"overrides": []}},
+              open(os.path.join(td, "overrides", "ov_fixture-_smartbnb.json"), "w"))
+    po2 = subprocess.run([sys.executable, str(HERE / "reduce_overrides.py"), "--listing", "fixture-listing",
+                          "--today", "2026-09-01", "--ttl-days", "36500"], capture_output=True, text=True, env=env)
+check("no overrides is a valid answer: exit 0, dates=0", po2.returncode == 0 and "dates=0" in po2.stdout, po2.stdout[:200] + po2.stderr[:200])
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:

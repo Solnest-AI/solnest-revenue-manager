@@ -664,11 +664,92 @@ def reservation_facts_reduced(text: str) -> dict:
     }
 
 
+# ----------------------------------------------------------------------------- overrides
+# PriceLabs returns every override as one row per date (a busy listing carries a few hundred).
+# The decision-relevant shape is the RUN: consecutive dates with the same price, price type,
+# min-stay and reason. The reducer prints runs; the harness re-derives every run from the raw
+# rows and from the printed table and compares them one by one through a digest.
+OVERRIDE_FACTS = ["dates_total", "runs", "first_date", "last_date", "percent_dates", "fixed_dates",
+                  "min_stay_dates", "run_digest"]
+OVERRIDE_COLUMNS = ["start", "end", "nights", "price", "price_type", "min_stay", "reason"]
+
+
+def _ov_price(v, ptype: str):
+    if v in (None, ""):
+        return ""
+    return _r(v, "pct" if ptype == "percent" else "price")
+
+
+def override_runs(rows: list[dict], today: str | None = None) -> list[dict]:
+    """Collapse per-date rows into runs. A run breaks on any change of value or on a date gap.
+    Rows before `today` are history, not active overrides, and are dropped."""
+    from datetime import date as _d, timedelta as _td
+    keyed = sorted((r for r in rows if r.get("date") and (today is None or str(r["date"]) >= today)),
+                   key=lambda r: str(r["date"]))
+    runs: list[dict] = []
+    for r in keyed:
+        ptype = r.get("price_type") or ""
+        sig = (_ov_price(r.get("price"), ptype), ptype,
+               _r(r.get("min_stay"), "min_nights") if r.get("min_stay") not in (None, "") else "",
+               (r.get("reason") or "").strip())
+        d = _d.fromisoformat(str(r["date"])[:10])
+        if runs and runs[-1]["sig"] == sig and _d.fromisoformat(runs[-1]["end"]) + _td(days=1) == d:
+            runs[-1]["end"], runs[-1]["nights"] = r["date"], runs[-1]["nights"] + 1
+        else:
+            runs.append({"sig": sig, "start": r["date"], "end": r["date"], "nights": 1})
+    for run in runs:
+        run["price"], run["price_type"], run["min_stay"], run["reason"] = run.pop("sig")
+    return runs
+
+
+def override_facts_from_runs(runs: list[dict]) -> dict:
+    return {
+        "dates_total": sum(int(r["nights"]) for r in runs),
+        "runs": len(runs),
+        "first_date": runs[0]["start"] if runs else None,
+        "last_date": runs[-1]["end"] if runs else None,
+        "percent_dates": sum(int(r["nights"]) for r in runs if r["price_type"] == "percent"),
+        "fixed_dates": sum(int(r["nights"]) for r in runs if r["price_type"] == "fixed"),
+        "min_stay_dates": sum(int(r["nights"]) for r in runs if r["min_stay"] != ""),
+        "run_digest": _digest((f"{r['start']}..{r['end']}", f"{r['price']}|{r['price_type']}|{r['min_stay']}|{r['reason']}")
+                              for r in runs),
+    }
+
+
+def override_facts_full(raw: dict, today: str) -> dict:
+    rows = raw.get("overrides", raw.get("data", raw)) if isinstance(raw, dict) else raw
+    if isinstance(rows, dict):
+        rows = rows.get("overrides", [])
+    return override_facts_from_runs(override_runs(rows, today))
+
+
+def override_facts_reduced(text: str) -> dict:
+    blocks, cur = {}, None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            cur = line[3:].strip(); blocks[cur] = []
+        elif line.startswith("# "):
+            continue
+        elif line.strip() and cur:
+            blocks[cur].append(line)
+    rows = list(csv.DictReader(io.StringIO("\n".join(blocks.get("runs", [])))))
+    runs = []
+    for r in rows:
+        ptype = r["price_type"]
+        runs.append({"start": r["start"], "end": r["end"], "nights": int(r["nights"]),
+                     "price": _ov_price(r["price"], ptype) if r["price"] != "" else "",
+                     "price_type": ptype,
+                     "min_stay": _r(r["min_stay"], "min_nights") if r["min_stay"] != "" else "",
+                     "reason": r["reason"].strip()})
+    return override_facts_from_runs(runs)
+
+
 SOURCES = {
     "airroi": (AIRROI_FACTS, airroi_facts_full, airroi_facts_reduced),
     "neighborhood": (NEIGHBORHOOD_FACTS, neighborhood_facts_full, neighborhood_facts_reduced),
     "calendar": (CALENDAR_FACTS, calendar_facts_full, calendar_facts_reduced),
     "reservations": (RESERVATION_FACTS, reservation_facts_full, reservation_facts_reduced),
+    "overrides": (OVERRIDE_FACTS, override_facts_full, override_facts_reduced),
 }
 
 
@@ -694,9 +775,9 @@ def main() -> int:
             if not args.category:
                 raise ValueError("--category is required for neighborhood")
             full = f_full(raw, args.category, args.days, args.start)
-        elif args.source == "reservations":
+        elif args.source in ("reservations", "overrides"):
             if not args.today:
-                raise ValueError("--today is required for reservations")
+                raise ValueError("--today is required for reservations and overrides")
             full = f_full(raw, args.today)
         else:
             full = f_full(raw)

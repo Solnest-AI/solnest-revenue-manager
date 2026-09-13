@@ -171,6 +171,7 @@ def build_one(l: dict, roster: dict, today: str, bdir: Path) -> dict:
          "--lat", str(l["lat"]), "--lng", str(l["lng"]), "--currency", cur,
          "--subject-id", str(l["airbnb_id"] or ""), "--subject-name", l["name"]],
         ["reconcile_pms.py", "--days", "365", "--listing", lid, "--pms", pms],
+        ["reduce_overrides.py", "--listing", lid, "--pms", pms, "--today", today],
     ]
     results = [run_reducer(c, env) for c in cmds]
     reduced_md = "\n".join(bash_block(r) for r in results)
@@ -267,17 +268,15 @@ def build_one(l: dict, roster: dict, today: str, bdir: Path) -> dict:
     ho_min = {k: ho.get(k) for k in ("id", "name", "currency", "capacity", "listed", "property_type", "room_type", "timezone")}
     ho_min["address"] = {k: (ho.get("address") or {}).get(k) for k in ("city", "state", "country", "coordinates")}
     ho_min["listings"] = [{"platform": x.get("platform"), "platform_id": x.get("platform_id")} for x in (ho.get("listings") or [])]
-    # active overrides / DSOs: production pulls these in Step 4 (Agent 2) and nothing reduces them
-    ov_file = croot / "pricelabs" / f"{id8}_overrides_asof{today}.json"
-    if not ov_file.is_file():
-        try:
-            ov = reduce_prices.call(f"/v1/listings/{lid}/overrides", key, None, f"?pms={pms}")
-        except SystemExit as e:
-            ov = {"error": f"overrides fetch failed: {e}"}
-        ov_file.write_text(json.dumps(ov))
-    overrides = json.loads(ov_file.read_text()); sources["overrides"] = str(ov_file)
+    # active overrides / DSOs: raw rows on the FULL side (what `pricelabs_list_overrides` returns),
+    # the reducer's run table on the REDUCED side (already in reduced_md via the 6th reducer)
+    ov_file = croot / "overrides" / f"ov_{id8}_{pms}.json"
+    if ov_file.is_file():
+        blob = json.load(open(ov_file)); sources["overrides"] = str(ov_file)
+        full_parts.append(tool_block("pricelabs_list_overrides", {"listing_id": lid, "pms": pms}, blob["data"]))
+    else:
+        full_parts.append(f"### MCP tool result: `pricelabs_list_overrides`\n(no payload: {results[5]['stderr'].strip()[:300]})\n")
     shared_md = (tool_block("pricelabs_list_listings (this listing's record)", {"id": lid}, rec_pl)
-                 + tool_block("pricelabs_list_overrides", {"listing_id": lid, "pms": pms}, overrides)
                  + tool_block("hospitable_get_property (projection: no descriptions, rules or credentials)", {"propertyId": lid}, ho_min))
 
     bdir.mkdir(parents=True, exist_ok=True)
@@ -365,7 +364,9 @@ def build_request(bdir: Path, condition: str) -> tuple[list[dict], list[dict], d
     user = [
         {"type": "text", "text": "# Step 4 pulls, shared (both agents)\n\n" + (bdir / "shared.md").read_text()},
         {"type": "text", "text": f"# Step 4 pulls, condition={condition}\n\n" + data},
-        {"type": "text", "text": task_text(meta), "cache_control": {"type": "ephemeral"}},
+        # 1h TTL: a rep runs 6-10 minutes, longer than the 5m TTL, so with 5m the next rep
+        # re-wrote the whole data block (measured: cw identical on rep 1 and rep 2).
+        {"type": "text", "text": task_text(meta), "cache_control": {"type": "ephemeral", "ttl": "1h"}},
     ]
     return system, [{"role": "user", "content": user}], meta
 
