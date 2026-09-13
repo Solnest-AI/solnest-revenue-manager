@@ -1,32 +1,22 @@
 ---
 name: revenue-manager
 description: >
-  STR revenue management expert that auto-detects your PMS MCP (Hostaway,
-  Guesty, Hostfully, Hospitable, OwnerRez, Lodgify, Uplisting, Smoobu) and
-  pricing-tool MCP (PriceLabs primary; Wheelhouse, Beyond pluggable), then
-  runs a hardened, recommend-only analysis with a built-in safety layer
-  (floor/ceiling guards, max-delta limits, thin-comp transparency, currency
-  gating, explanatory confidence, human approval gate, freshness checks) and
-  a full STR revenue framework (the Revenue Flywheel, the Pricing Stack,
-  lead-time logic, the 5-question decision framework, the 30-day daily review,
-  red-flag detection, comp-set discipline, KPIs, and owner reports). It pulls
-  a full year of forward calendar plus complete historical bookings, uses
-  PriceLabs neighborhood data as the comp engine, treats the PMS calendar as
-  ground truth for listed price, tracks both ask (calendar) and cleared (ADR)
-  rates with empirically-measured markup, auto-detects optional enrichment
-  (RankBreeze for ranking/visibility, Turno/Breezeway for ops, AirROI
-  for named-competitor comps), and logs every decision and change to four
-  Supabase audit tables. On request, it also exports a multi-tab Excel
-  workbook (portfolio summary tab + one tab per property, full breakdown) as
-  a final deliverable. MANDATORY TRIGGER: use whenever the user mentions
-  revenue management, pricing strategy, rate optimization, occupancy, ADR,
-  RevPAR, nightly rates, base price, min price, max price, dynamic pricing,
-  seasonal pricing, min-stay, date-specific overrides, DSOs, market comps,
-  comp set, underpriced, overpriced, booking pace, ranking, visibility, a
-  pricing spreadsheet or owner-report export, or any discussion of STR pricing
-  or revenue. Also trigger when the user mentions any
-  supported PMS or pricing-tool name in a pricing context. Even a casual "check
-  my pricing" or "how are my properties doing" applies.
+  Recommend-only STR revenue manager. Auto-detects the PMS MCP (Hostaway,
+  Guesty, Hostfully, Hospitable, OwnerRez, Lodgify, Uplisting, Smoobu) and the
+  pricing MCP (PriceLabs; Wheelhouse, Beyond), reconciles the PMS calendar
+  against PriceLabs before pricing anything, runs a safety layer (floor/ceiling,
+  max-delta, thin comps, currency, freshness, human approval) and the STR
+  revenue framework, and logs approved changes to Supabase. Optional AirROI,
+  RankBreeze, Turno/Breezeway enrichment; optional Excel workbook and owner
+  report. MANDATORY TRIGGER: use whenever the user mentions revenue management,
+  pricing strategy, rate optimization, occupancy, ADR, RevPAR, nightly rates,
+  base price, min price, max price, dynamic pricing, seasonal pricing, min-stay,
+  date-specific overrides, DSOs, market comps, comp set, underpriced,
+  overpriced, booking pace, ranking, visibility, a pricing spreadsheet or
+  owner-report export, or any discussion of STR pricing or revenue. Also
+  trigger when the user mentions any supported PMS or pricing-tool name in a
+  pricing context. Even a casual "check my pricing" or "how are my properties
+  doing" applies.
 ---
 
 # Revenue Manager
@@ -351,9 +341,7 @@ Parse heavy JSON with python3 into compact tables before reporting. For PriceLab
 
 ### Step 4a — PriceLabs neighborhood data = the comp engine (via the reducer, never the raw MCP)
 
-**Do not call `pricelabs_get_neighborhood_data` directly.** One response is ~118,000 tokens:
-every bedroom category the market has, 540 days of daily occupancy of which the first 180 are
-the past, and ten series where the decision reads seven. Run the reducer instead:
+**Do not call `pricelabs_get_neighborhood_data` directly** (why: `references/evidence.md`, Neighborhood). Run the reducer:
 
 ```bash
 python3 fetch/reduce_neighborhood.py --listing <pricelabs id> --bedrooms <N> \
@@ -381,9 +369,7 @@ Always report N. Exit **2 means "market unverified this run"**, never "no market
 
 ## Step 4.8 — Named comps via the reducer, never the raw MCP (AirROI, optional)
 
-One `get_comparables` response is **~103,000 tokens**: 25 listings at ~7.8 KB each, and ~40%
-of every listing is its description and photo URLs, which a pricing decision never reads.
-The 13 fields it does read fit in a 75-byte CSV row.
+(Why: `references/evidence.md`, AirROI.)
 
 ```bash
 python3 fetch/reduce_comps.py --bedrooms 4 --baths 2 --guests 8 \
@@ -418,14 +404,7 @@ Revenue Manager does not.
 under a channel account that is not wired into the PriceLabs sync, come back as plainly
 **AVAILABLE** (`booking_status: ""`, `unbookable: 0`). Not as blocks. Not as errors.
 
-Measured live 2026-09-12 across a 7-listing portfolio, forward 180 days: **54 booked
-nights worth CA$97,083 were invisible to PriceLabs on 4 listings.** One ski chalet read
-0% occupancy for December and January in PriceLabs while the PMS had it 71% and 84%
-booked over Christmas and New Year at CA$1,161 to CA$3,500 a night.
-
-Left unguarded, Step 6's own red-flag table fires *"5+ consecutive unbooked days, drop
-10 to 15%"* and *"comp set fully booked and you are not, match comp pricing"* on
-sold-out peak inventory. That is the single most expensive failure this skill can make.
+(Why, with the measured incident: `references/evidence.md`, Reconciliation.)
 
 ### The rule
 
@@ -497,8 +476,7 @@ The PMS calendar price, the PriceLabs recommended price, and realized ADR are th
 
 ### Markup — measure it, never assume (the gate already did; read its `## calendar` block)
 
-**Do not load the raw PMS calendar for this.** A 365-day Hospitable calendar is ~49,000
-tokens per listing and Step 4.9 already pulled it. Every number below comes from the gate's
+**Do not load the raw PMS calendar for this.** Step 4.9 already pulled it (why: `references/evidence.md`, Calendar). Every number below comes from the gate's
 per-listing `## calendar` header line: `paired=` (available nights priced in both systems),
 `markup_median=` (PMS price ÷ PriceLabs price, 1.0 = no markup), `markup_stdev=`, and
 `min_stay_mismatch=`. The `### drift` rows under it are the exact dates where the two
@@ -516,117 +494,7 @@ The PMS calendar price and the PriceLabs price will sometimes differ. Compute th
 
 ## Step 6 — Apply the STR revenue framework
 
-Now layer the discipline on top of the (safety-cleared) data. The framework is the *how* of a good recommendation; the safety layer is the *guardrail* around it.
-
-### 6.1 — The Revenue Flywheel (the mission)
-
-**Visibility → Bookings → Reviews → Ranking → back to Visibility.** Revenue management is the engine that keeps this spinning. Each part feeds the next: better pricing → more bookings → more reviews → better ranking → more visibility → more bookings at higher rates.
-
-- **Visibility comes BEFORE pricing.** You cannot charge premium rates if nobody sees the listing. Always check the visibility spoke first.
-- **Map the visibility/ranking spoke to RankBreeze when present.** RankBreeze tools are single-listing (most require a `listing_id`). **Call `mcp__rankbreeze__list_properties` first** to map each PMS property to its RankBreeze `listing_id` (Airbnb-listing-scoped, NOT the PMS property UUID), then call the per-listing tools (`get_rankings`, `get_calendar_rankings`, `get_competitor_rates`, `get_metrics`, `analyze_property`) in a loop. If a property has no RankBreeze match, fall back to the manual ranking check **for that property only**.
-- **If RankBreeze is absent, ranking becomes a flagged MANUAL CHECK** — tell the operator to search their market on Airbnb for the same guest count/dates and note where the listing appears. Never block on it.
-- Reviews spoke = recent reviews from the PMS (review score, trend). Below 4.6 is a ranking problem (see KPIs).
-
-### 6.2 — The Pricing Stack (build every rate from the base)
-
-Rates build up from Base. Factors above add; factors below reduce. Min/Max are hard limits (the floor/ceiling guard, 2.1).
-
-```
-MAX PRICE         The ceiling. Peak-demand cap. Hitting it often → raise it.
-EVENT BOOST       +15–40% for holidays, local events, school breaks, festivals.
-WEEKEND PREMIUM   +20–40% for Fri/Sat nights.
-SEASONAL FACTOR   Peak vs shoulder vs off — adjust to the market's pattern.
-⭐ BASE PRICE ⭐    Anchor rate. Set from comp data. Mid-week, mid-season, average demand.
-LAST MINUTE       -10–20% for dates within 7–14 days. Better to fill than earn $0.
-ORPHAN DAY        -15–25% for isolated single nights between bookings.
-MIN PRICE         The floor. Never below owner breakeven.
-```
-Also: **far-out pricing +5–15% above base for dates 90+ days out** (early bookers are planners willing to pay more; you can always lower later).
-
-**Min-stay defaults:** 2-night on weekends, 3-night on holidays, 1-night for last-minute / orphan fills.
-
-### 6.3 — Lead-Time Pricing Logic
-
-| Days until check-in | Pricing approach | Signal |
-|---|---|---|
-| **90+ days** | Price 5–15% above base. Hold firm. | Early bookers pay more. No discount needed. |
-| **60–90 days** | At or slightly above base. | Normal window. Monitor pacing vs last year. |
-| **30–60 days** | At base. Start watching closely. | If behind pace, begin small adjustments here. |
-| **14–30 days** | Evaluate carefully. Small drops if needed. | Decision window. Compare to comp availability. |
-| **7–14 days** | Enable last-minute discounts (10–20%). | Still open → better to fill at a discount than $0. |
-| **0–7 days** | Aggressive discounting if still open. | Drop minimums to 1 night. Accept 1-night stays. Fill at any reasonable rate. |
-
-### 6.4 — The Pricing Decision Framework (5 ordered questions)
-
-For any date, ask these IN ORDER:
-1. **What does the comp set say?** (PriceLabs neighborhood percentiles by bedroom; AirROI named comps if present.) 30% above comps and not booking is a signal.
-2. **What does pacing look like?** Booked nights vs same period last year (STLY). Behind → consider down. Ahead → hold or raise.
-3. **Are there events or demand spikes?** Local events, holidays, school breaks. Price into them; don't leave them at base.
-4. **What is the lead time?** A date 90 days out unbooked is not urgent. The same date 14 days out unbooked is a problem. (See 6.3.)
-5. **Are there orphan days?** Single-night gaps need special handling — drop minimums or discount to fill.
-
-### 6.5 — Comp-set discipline
-
-A comp is a property **a guest would realistically choose instead of yours.** The test: *"Would a family of 6 looking for a weekend cabin realistically choose THAT property instead of ours?"* If it's not a clear yes, it's not a comp.
-
-**Match on:** similar bedroom count (within 1 BR), similar key amenities (hot tub, pool, game room), similar guest capacity, similar location/drive time to attractions, similar quality and condition.
-**Do NOT match on:** same zip code alone, just being the same property type with wildly different amenities, similar nightly rates (rate is an output, not a filter), same management company, similar review count.
-
-Reading comp data — for each comp compare ADR, occupancy, revenue (= ADR × occ, the ultimate comparison), reviews, photos.
-
-**Map to tools:** PriceLabs neighborhood data = the **aggregate** comp engine (percentiles, market occ, STLY). **AirROI (optional) = the named, qualitative** layer — specific competitors a guest would compare. Remember AirROI returns native local currency (called with `currency=native`; verify the echoed currency per gate 2.4) and never overrides PriceLabs silently.
-
-### 6.6 — The 30-Day Daily Review (the core habit — 6 steps)
-
-When the operator runs a daily review, walk the next 30 days for every property:
-1. **Open the calendar view** (PMS calendar = ground truth + PriceLabs forward curve). Scan for unbooked gaps, prices that look off, orphan days.
-2. **Check pacing** — booked nights this month vs same month last year (STLY from PriceLabs neighborhood + PMS history). Ahead → hold/raise. Behind → investigate and adjust.
-3. **Review recent bookings** — anything book in the last 24h? Booked right after a drop → dropped too far. Nothing booking despite availability → price may be too high (or a visibility problem — check ranking).
-4. **Check the comp set** — what are comps charging for the same dates? In line, above, below? Still available or booked?
-5. **Make adjustments** — specific changes, each with an articulable reason (and each passing the safety layer).
-6. **Log everything** — every adjustment to Supabase (audit, Step 9). This is how patterns compound and how you report to owners.
-
-### 6.7 — Red-Flag auto-detection (compute each from PMS + PriceLabs data)
-
-| Red flag | Detection rule (from your pulled data) | What to do |
-|---|---|---|
-| 5+ consecutive unbooked days within 14 days | Count consecutive `AVAILABLE` calendar days where the run starts ≤14 days out | Price too high OR visibility problem. Check comps; drop 10–15%; **check ranking first** (RankBreeze or manual). |
-| Date booked within hours of going live | Reservation `created_at` − calendar/price-publish time < ~24h | Price was too low. Raise base + min for similar future dates. Money left on the table. |
-| Orphan day sitting 7+ days | Single `AVAILABLE` night flanked by `RESERVED` on both sides, unbooked for 7+ days | Drop min-stay to 1; discount 15–25%; fill it. |
-| All weekends booked, all weekdays empty | Fri/Sat occupancy high while Mon–Thu occupancy low over forward window | Weekday rates too high. Drop weekday rates; consider 5+ night discounts. |
-| Comp set fully booked, you are not | PriceLabs market occupancy high (e.g. 75/90 percentile booked) while your forward occ is low | Overpriced or a listing/ranking issue. Match comp pricing; audit listing quality + ranking. |
-| Comp set empty, you are booked | Your forward occ high while market occupancy low | Possibly underpriced — comps held firm and you didn't. Hold pricing longer before discounting next time. |
-
-### 6.8 — Troubleshooting playbook
-
-- **Property not booking →** check **ranking FIRST** (RankBreeze, else manual Airbnb search). If it's on page 5+, pricing isn't the primary problem — visibility is. Then check pricing vs comps (even 10–15% over can kill bookings), then listing quality, then min-stay.
-- **Booked too fast →** prices were too low. Raise base + min for that range; check what comps are still charging; set a reminder to pre-adjust next year.
-- **Seasonal transition →** start adjusting **30–45 days BEFORE** the season shifts, not after bookings dry up. Drop rates gradually, lower min-stay, enable aggressive last-minute discounts, refresh listing content for the new season.
-- **Bad review hits →** read it carefully, fix the underlying issue immediately, respond professionally and briefly in public, push for 2–3 strong reviews to bury it, audit the guest-communication flow.
-
-### 6.9 — KPIs & benchmarks
-
-| Metric | Target / benchmark |
-|---|---|
-| ADR (cleared) | At or above comp-set median. Track monthly trend. |
-| Occupancy | **70–85% peak, 40–60% off-season** (market dependent). |
-| RevPAR (ADR × occ) | The single best efficiency metric. Higher = better. |
-| Booking pace vs STLY | Ahead → hold/raise. Behind → adjust down or promote. |
-| Page views | **500–600 average; top performers 2,000–3,500+** in peak. (RankBreeze if present, else manual.) |
-| Click-through rate | Higher = better photos/title. Low → rotate photos / rewrite title. |
-| Conversion rate | Low → pricing too high or listing content needs work. |
-| Review score | Target **4.8+. Below 4.6 = a ranking problem.** |
-| Response time | **Under 1 hour.** Automate initial responses. |
-
-### Revenue levers (ranked by expected impact)
-
-1. **Base price alignment** — biggest single lever
-2. **Max price ceiling** — fully booked → ceiling too low
-3. **Min price floor** — too many dates pinned to it → lower or trust the algo
-4. **Seasonal DSOs** — holidays, events, peak/shoulder/off
-5. **Min-stay rules** — turnover cost vs fill rate (defaults: 2-night weekends, 3-night holidays, 1-night last-minute/orphan)
-6. **Last-minute discounts** — fill 3–7 day gaps
-7. **Weekend premiums** — leisure markets
+Read `references/framework.md` NOW, in full, before writing a single recommendation. It carries the Revenue Flywheel, the Pricing Stack, lead-time logic, the 5-question decision framework, the 30-day review, the red-flag table (including the rule that a floor-pinned listing cannot be fixed by cutting price), comp-set discipline and the KPI targets. Every recommendation in Step 7 must cite which of its rules it applied.
 
 ## Step 7 — Present recommendations (every one clears the safety layer + the framework)
 
@@ -646,29 +514,7 @@ Then **wait for explicit approval.** Recommend-only — no write without it.
 
 ## Step 7.5 — Offer the spreadsheet (a multi-tab workbook deliverable)
 
-After presenting recommendations, **offer** a spreadsheet — don't auto-generate it:
-
-> "Want a spreadsheet of this? Summary tab + one tab per property, full breakdown."
-
-Only if they say yes, build it. This is **pure output** — it reads nothing new, pushes nothing, and writes nothing to Supabase. It reflects the current state: recommendations are marked `proposed`, or `applied` if the operator already approved and you executed them in Step 8.
-
-**1. Assemble the data as JSON.** You already have everything from Steps 4–7. Build one JSON object matching the shape documented at the top of `report/build_workbook.py` (use `report/sample_data.json` as the working template): a `meta` block, a `portfolio_summary` roll-up, and a `properties[]` array where each property carries pricing (current vs recommended base/min/max), comps, ask-vs-cleared, KPIs, red flags, the recommendations table, any DSO/min-stay recs, and the safety-layer footer. Write it to a temp file **in the OS temp dir** (e.g. `/tmp/rm_report.json`), never inside the bundle.
-
-**2. Ensure openpyxl (one-time, local, no system pollution).** The `report/` folder sits next to this SKILL.md. Create a local venv there once and install openpyxl:
-```bash
-cd <plugin>/skills/revenue-manager/report
-python3 -m venv .report-venv 2>/dev/null
-.report-venv/bin/python -m pip install -q openpyxl 2>/dev/null
-```
-`.report-venv/` is gitignored. If the venv or install fails, **don't stop** — the script auto-degrades to a folder of CSVs (one summary + one per property) so the operator still gets every number.
-
-**3. Generate.** Prefer the venv python; fall back to system `python3` (which triggers the CSV path):
-```bash
-.report-venv/bin/python build_workbook.py /tmp/rm_report.json    # or:  python3 build_workbook.py /tmp/rm_report.json
-```
-With no output path the workbook lands on the operator's Desktop (or the current folder) as `Revenue-Report-<YYYY-MM-DD>.xlsx`.
-
-**4. Report the path.** The script prints exactly one result line — `WORKBOOK_WRITTEN: <path>` (real xlsx) or `CSV_FALLBACK_WRITTEN: <dir>/` (openpyxl unavailable). Tell the operator the exact path and which format they got. If it was the CSV fallback, mention they can install openpyxl to get the single multi-tab workbook next time.
+Offer the multi-tab Excel workbook once the recommendations are presented. If the operator says yes, read `references/workbook.md` and follow it exactly; do not build the workbook from memory.
 
 ## Step 8 — Execute changes (only on human approval)
 
@@ -686,199 +532,23 @@ Destructive operations (deleting overrides/DSOs, overriding the PMS calendar) al
 
 ## Step 9 — Audit write (only when changes happen — never on read-only analysis)
 
-After a successful change, write to Supabase. INSERT for append-only tables; UPSERT on `(property_id, snapshot_date)` for `market_snapshots`.
-
-### Per change → 1 row in `pricelabs_change_log`
-```sql
-INSERT INTO pricelabs_change_log
-  (property_name, listing_id, change_type, field_changed,
-   old_value, new_value, reason, changed_by, notes)
-VALUES
-  ($1, $2, $3, $4, $5::text, $6::text, $7, 'revenue-manager-skill', $8);
-```
-One row per individual field change (base, min, max, a bound override, and each DSO/override date counts as its own row).
-
-### Per property per decision → 1 row in `pricing_decisions` (outcome columns nullable, seeded null)
-```sql
-INSERT INTO pricing_decisions
-  (property_id, decision_date, base_price, final_price,
-   strategy, signals, reasoning, outcome,
-   booked_at, lead_time_days, price_delta_from_rec)
-VALUES ($1, CURRENT_DATE, $2, $3, $4, $5::jsonb, $6, 'executed',
-        NULL, NULL, NULL);
-```
-`signals` is a jsonb array of the data points that drove the decision (comp percentile, comp count N, occupancy, STLY delta, ask-vs-cleared spread, etc). Leave `booked_at` / `lead_time_days` / `price_delta_from_rec` NULL — they seed the v2 learning loop and are populated later, not now.
-
-### Per property per day → upsert to `market_snapshots`
-```sql
-INSERT INTO market_snapshots
-  (property_id, snapshot_date, occupancy_pct, avg_comp_rate,
-   demand_score, raw_data)
-VALUES ($1, CURRENT_DATE, $2, $3, $4, $5::jsonb)
-ON CONFLICT (property_id, snapshot_date) DO UPDATE SET
-  occupancy_pct = EXCLUDED.occupancy_pct,
-  avg_comp_rate = EXCLUDED.avg_comp_rate,
-  demand_score  = EXCLUDED.demand_score,
-  raw_data      = EXCLUDED.raw_data;
-```
-
-### Property config setup / update (bounds, markup, targets, seasons)
-Write when the user configures markup, min/base/max bounds (including a plain-English bound override), targets, or season months:
-```sql
-INSERT INTO property_config
-  (property_id, display_name, base_price, min_price, max_price, settings)
-VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-ON CONFLICT (property_id) DO UPDATE SET
-  display_name = EXCLUDED.display_name,
-  base_price   = EXCLUDED.base_price,
-  min_price    = EXCLUDED.min_price,
-  max_price    = EXCLUDED.max_price,
-  settings     = EXCLUDED.settings;
-```
-
-**Recommended `settings` jsonb shape:**
-```jsonc
-{
-  "markup_pct": 0.0,                  // measured empirically; 0.0 = no nightly markup (fees at channel)
-  "max_delta_pct": 0.25,
-  "pms_platform": "hospitable",
-  "pricing_tool": "pricelabs",
-  "pricelabs_listing_id": "...",
-  "currency": "CAD",
-  "target_occupancy_30d": 0.65,
-  "peak_months":    [6, 7, 8, 12],
-  "shoulder_months":[4, 5, 9, 10],
-  "off_months":     [1, 2, 3, 11],
-  "weekend_premium_pct": 0.30,        // 20–40% band; 0.30 is a starting default
-  "notes": "markup measured empirically — 0.0 means no nightly markup; fees added at channel"
-}
-```
-
-### If Supabase isn't connected
-Skip the writes. At the end of the report, print:
-```
-⚠️ Audit logging skipped — Supabase not connected.
-   To enable: follow the Supabase setup in the plugin README (Phase 3 of SETUP.md).
-   You do NOT need to run any SQL by hand — connect a writable Supabase MCP and
-   the skill creates all 4 tables itself on the next run (Step 3.0).
-```
+Runs ONLY after Step 8 executed an approved change, never on read-only analysis. When it does, read `references/audit-write.md` for the exact INSERT templates for all four tables and the `signals` jsonb shape. Do not improvise the schema.
 
 ## Optional — Owner Report output (Lead with wins → Context → Honest → Plan)
 
-If the operator asks for an owner report (or you're producing a monthly summary), frame it as a story, not a data dump. Owners want: How am I doing? Why? What are you doing about it?
-
-1. **Lead with wins** — higher ADR, more bookings than last year, strong review score.
-2. **Provide context** — always compare to something: last month, last year (STLY), or the comp-set average. Numbers without context are meaningless.
-3. **Be honest** — if pacing is behind, say so plainly. Owners respect honesty over spin.
-4. **Show the plan** — end with what you're doing next (rate adjustments, listing refresh, photo test).
-
-Include: gross revenue, ADR (cleared), occupancy, bookings, comp comparison, and key actions taken. Keep it to 3–4 takeaways. Sample good framing: *"February was strong — revenue hit $4,200, up 18% over last February. ADR rose to $245 (from $215) thanks to comp-based adjustments. Occupancy held at 58%, right in line with the market. March pacing is solid and we've already adjusted rates for spring-break demand."*
+If the operator asks for an owner-facing report, read `references/owner-report.md` (lead with wins, then context, then what changed and why).
 
 ## PMS field reference (platform-specific parsing)
 
-Every supported PMS has a named calendar **write** tool — resolve it from Step 0 detection at execute time (Step 8), never default to Hospitable.
-
-| PMS | Bookings source | Calendar read | Calendar write tool |
-|---|---|---|---|
-| Hostaway | `reservations` | `/listings/{id}/calendar` | `hostaway_update_calendar` (or the detected `hostaway_*` calendar mutation) |
-| Guesty Pro | `reservations` | calendar endpoint | `guesty_update_calendar` (detected `guesty_*` mutation) |
-| Hostfully | `leads` | calendar endpoint | detected `hostfully_*` calendar mutation |
-| Hospitable | transactions for history (see below) | `hospitable_get_property_calendar` | `hospitable_update_property_calendar` |
-| OwnerRez | `bookings` | calendar endpoint | detected `ownerrez_*` calendar mutation |
-| Lodgify | `reservations/bookings` | calendar endpoint | detected `lodgify_*` calendar/rate mutation |
-| Uplisting | reservations | calendar endpoint | detected `uplisting_*` calendar mutation |
-| Smoobu | reservations (apartments) | rates endpoint | detected `smoobu_*` rates mutation |
-
-If the detected PMS exposes no calendar-write tool, push via the pricing-tool MCP instead (PriceLabs pushes to the PMS) and say so at the approval gate.
-
-### Hostaway
-- Properties → `listings` · Bookings → `reservations`
-- Reservation fields: `id`, `arrivalDate`, `departureDate`, `totalPrice`, `channelName`, `status`
-- Calendar: `/listings/{id}/calendar` → `date`, `status`, `price`, `minimumStay`
-
-### Guesty Pro
-- Reservation fields: `_id`, `checkIn`, `checkOut`, `money.fareAccommodation`, `source`, `status`
-- Calendar: `date`, `status`, `price`, `minNights`
-
-### Hostfully
-- Bookings called "leads" (Hostfully terminology)
-- Requires `agencyUid` on every call
-
-### Hospitable
-- Calendar **read** (GROUND TRUTH for listed price): `hospitable_get_property_calendar` → `data.days[]` with `date`, `min_stay`, `status.reason` (`RESERVED`/`AVAILABLE`), `price.amount`. **`price.amount` is in cents — divide by 100.**
-- Calendar **write**: `hospitable_update_property_calendar` → `price` is a plain **nightly price in dollars** (NOT cents). **Read in cents, write in dollars — convert before push** and pre-push assert the value is within min/max in native dollars (Step 8).
-- **History:** `hospitable_list_reservations` returns ONLY upcoming/active reservations. For past/completed bookings, realized ADR, YoY/STLY, and channel-mix history, use `hospitable_list_transactions` (and/or `pricelabs_list_reservations`).
-- PMS name inside PriceLabs is `smartbnb`
-- Tools: `hospitable_get_property_calendar`, `hospitable_list_reservations` (forward/active only), `hospitable_list_transactions` (history), `hospitable_list_reviews`, `hospitable_update_property_calendar`
-
-### OwnerRez
-- Bookings → `bookings` (fields: `id`, `arrival`, `departure`, `total`, `channel`, `status`)
-- Requires `User-Agent` header on every request
-
-### Lodgify
-- Bookings → `reservations/bookings` · fields: `id`, `arrival`, `departure`, `total_amount`, `source`, `status`
-
-### Uplisting
-- Auth: `Authorization: Basic <base64(api_key)>`
-
-### Smoobu
-- Properties called "apartments" · Auth header is `Api-Key` (exact case)
+Platform-specific parsing for every supported PMS (field names, units such as Hospitable's cents-on-read / dollars-on-write, forward-only endpoints, write tools). Read `references/pms-fields.md` once, right after Step 0 detects the PMS, and only the section for that PMS.
 
 ## Pricing-tool field reference
 
-### PriceLabs (primary — the comp engine + the recommendation source)
-- Base URL: `https://api.pricelabs.co` · Auth: `X-API-Key`
-- PMS name mapping for Hospitable: `smartbnb`
-- Rate limits: 60/min, 1,000/hr. Timeout: 300s for neighborhood_data.
-
-Key structures:
-```python
-# Neighborhood = the comp engine (~85 comps, percentiles by bedroom, native currency)
-# Pull it through fetch/reduce_neighborhood.py (Step 4a), never via the raw MCP tool.
-# Raw structure, for reference only:
-data['data']['Summary Table Base Price']['Category']   # Comp by bedroom count
-data['data']['Future Occ/New/Canc']['Category']        # Market occ + STLY + 7-day pickup (10 series, 540 days)
-data['data']['Future Percentile Prices']['Category']    # 25/50/75/90 + median booked + N (6 series, 360 days)
-
-# Per-date pricing (forward ASK curve = what PriceLabs pushes to the PMS)
-listing['data']  # Array of date objects
-#   date, price (ASK / recommended), uncustomized_price, min_stay, booking_status, ADR (CLEARED)
-#   reason.listing_info: nhood_occ, minimum_price, maximum_price, base_price
-#   reason.market_factors: seasonality, demand_factor
-#   user_price ("user price (from PMS)"): freshness varies by listing — MEASURE it against the
-#     live PMS calendar per property (Step 5); don't assume it's current. PMS calendar is ground truth.
-
-# Reservations (CLEARED-rate inputs)
-# listing_id, listing_name, check_in, check_out, booking_status,
-# rental_revenue, no_of_days, booking_channel, guestName
-```
-Tools: `pricelabs_list_listings`, `pricelabs_get_listing`, `pricelabs_get_listing_prices`, `pricelabs_get_neighborhood_data`, `pricelabs_list_reservations`, `pricelabs_list_overrides`, `pricelabs_set_overrides`, `pricelabs_delete_overrides`, `pricelabs_update_listings`, `pricelabs_get_rate_plans`.
-
-### Wheelhouse (optional / pluggable)
-- Base URL: `https://api.usewheelhouse.com/ss_api/v1/` · Auth: `X-User-API-Key`
-- Uses "custom rates" instead of "DSOs". Demand Signal endpoint = richer market data (separate `IntegrationApiKey`).
-
-### Beyond (optional / pluggable — self-serve Partners API)
-- A Beyond MCP is built from the **Partners API** (`developers.beyondpricing.com`, JSON:API, self-serve **Personal Access Token** `bpat_…`) — see `build-pricing-ops-mcp.md`. It exposes listings, the price + availability calendar, compsets, Beyond's recommendations, and per-listing customizations (base/min/max price, min/max stay, fees, time-based adjustments) — writes behind a confirm gate.
-- Often the PMS calendar already contains Beyond's pushed prices, so you can also read from the PMS side.
+PriceLabs, Wheelhouse and Beyond tool names, field traps and raw payload shapes, for reference. Read `references/pricing-tool-fields.md` only if a reducer exits 2 and you need to reason about the raw source, or the pricing tool is not PriceLabs.
 
 ## Optional enrichment reference (detect-and-use; never a critical path)
 
-### RankBreeze (visibility/ranking spoke of the flywheel)
-- Tools: `mcp__rankbreeze__list_properties`, `get_rankings`, `get_calendar_rankings`, `get_competitor_rates`, `get_metrics`, `analyze_property`, `health_check`.
-- **Multi-property mapping:** all the data tools are single-listing and need a `listing_id`. Call `list_properties` FIRST to map each PMS property to its RankBreeze `listing_id` (Airbnb-listing-scoped, NOT the PMS property UUID), then loop the per-listing tools. No match for a property → manual ranking check for that one property; never block.
-- Use for ranking position, page-view/visibility signal, and the "check ranking FIRST" troubleshooting step. If absent → ranking is a flagged manual check.
-
-### Turno / Breezeway (ops signals)
-- **Turno:** `turno_list_projects` / `turno_list_bookings` for cleaning/turnover cost. Flag turnover cost as a revenue leak when too many 1-night stays. (Call `turno_check_connection` first.)
-- **Breezeway:** task costs. Rising maintenance explains margin drop even with strong occupancy.
-- Append as an "Operational signals" section at the end of the report.
-
-### AirROI (named-competitor comps — native local currency) — `mcp__airroi__*`
-- **Pull through `fetch/reduce_comps.py` (Step 4.8), not the MCP tool directly.** The MCP path costs ~103k tokens per call and cannot assert currency or exclude the subject. The MCP is still what Step 0 detects; the reducer hits the same API.
-- MCP tools: `get_comparables` (≤25 named comps w/ TTM revenue/ADR/occ/ratings), `get_estimate` (revenue projection + percentiles + comps), `get_listing` (full listing detail), `get_listing_metrics` (monthly occ/ADR/rev/RevPAR), `health_check`. If `mcp__airroi__*` isn't connected, **skip silently** — it only enriches PriceLabs, never required. (Setup: it's a bundled MCP at `mcp-servers/airroi/` — build the venv, add a free AirROI key, register, restart Claude Code.)
-- Use for the **qualitative** named-competitor comp layer ON TOP of PriceLabs' aggregate neighborhood data.
-- **Native currency:** call with `currency=native` so figures return in each market's local currency (normally matching your PMS/PriceLabs). Verify the echoed `currency` field; on a genuine mismatch convert (named live FX + timestamp, gate 2.4) or flag-and-exclude — never silently mix. Never contradict PriceLabs silently — if they disagree, surface and explain.
+AirROI, RankBreeze, Turno and Breezeway: tool names, caveats, what each adds. Read `references/enrichment.md` when Step 0 detects any of them.
 
 ## Key Rules
 
