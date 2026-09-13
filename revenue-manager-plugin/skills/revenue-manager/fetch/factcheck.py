@@ -24,6 +24,7 @@ precision the decision actually uses (an ADR of 538.94 vs 538.9 is not a lost fa
 USAGE
 -----
     python3 factcheck.py airroi --full raw.json --reduced reduced.txt [--subject-id ID]
+    python3 factcheck.py neighborhood --full raw.json --reduced reduced.txt --category 4 [--days N]
     exit 0 = every fact matches, exit 1 = mismatch (listed), exit 2 = could not check
 """
 
@@ -39,6 +40,10 @@ import sys
 # One place for precision. Reducers round to these; extractors compare at these.
 PRECISION = {
     "adr": 1, "occ": 3, "revenue": 0, "revpar": 1, "rating": 2, "min_nights": 0,
+    # neighborhood: whole dollars and whole percent. A decision comparing an ask of
+    # $700 to a p75 of $1,115 does not read the cents, and 85.29% vs 85% is not a
+    # different market.
+    "nb_price": 0, "nb_pct": 0, "count": 0,
 }
 
 
@@ -170,8 +175,173 @@ def compare(full: dict, reduced: dict, names: list[str]) -> list[str]:
     return bad
 
 
+# ---------------------------------------------------------------- PriceLabs neighborhood
+
+NEIGHBORHOOD_FACTS = [
+    "category", "listings_used", "currency", "daily_rows", "daily_first", "daily_last",
+    "base_p25", "base_p50", "base_p75", "base_p90",
+    "p50_next30_mean", "p90_next30_mean", "booked_med_next30_mean",
+    "occ_next30_mean", "occ_stly_next30_mean", "occ_ly_next30_mean",
+    "new_bk_next30_sum", "avail_next30_mean",
+    "p50_by_date_digest", "occ_by_date_digest",
+    "kpi_months", "kpi_booking_window_l365", "kpi_los_l365", "kpi_pickup7_latest",
+    "monthly_p50_digest",
+]
+
+# Series kept from 'Future Occ/New/Canc' (label -> csv column). Dropped on purpose:
+# Total_Available_Listings_LY, Occupancy_L2Y, Occupancy_ST2Y (two years back / LY supply).
+NB_OCC_SERIES = {
+    "Occupancy": "occ", "Occupancy_STLY": "occ_stly", "Occupancy_LY": "occ_ly",
+    "New Bookings": "new_bk", "New_Bookings_STLY": "new_bk_stly",
+    "Canceled Bookings": "cancel", "Total_Available_Listings": "avail",
+}
+NB_PCT_SERIES = {
+    "25th Percentile": "p25", "50th Percentile": "p50", "75th Percentile": "p75",
+    "Median Booked Price": "booked_med", "90th Percentile": "p90", "N_Bookings": "n_bk",
+}
+NB_KPI_SERIES = {
+    "Total Available Days": "avail_days", "Booking Window": "booking_window", "LOS": "los",
+    "Revenue": "revenue", "Total Booked Days": "booked_days", "Future Available Days": "fut_avail",
+    "Future Booked Days": "fut_booked", "Future Booked Days STLY": "fut_booked_stly",
+    "7 Day Pickup": "pickup7", "7 Day Pickup STLY": "pickup7_stly",
+}
+NB_DAILY_COLUMNS = ["date"] + list(NB_PCT_SERIES.values()) + list(NB_OCC_SERIES.values())
+NB_KPI_COLUMNS = ["month"] + list(NB_KPI_SERIES.values())
+NB_MONTHLY_COLUMNS = ["month"] + list(NB_PCT_SERIES.values())
+
+
+def _digest(pairs) -> str:
+    """Stable fingerprint of a (date, value) sequence so per-date exactness is checked
+    without listing hundreds of values in the fact table."""
+    import hashlib
+    return hashlib.sha1("|".join(f"{d}={v}" for d, v in pairs).encode()).hexdigest()[:16]
+
+
+def _nb_kind(col: str) -> str:
+    if col in ("p25", "p50", "p75", "p90", "booked_med"):
+        return "nb_price"
+    if col.startswith("occ"):
+        return "nb_pct"
+    return "count"
+
+
+def neighborhood_daily_from_raw(raw: dict, category: str, days: int | None = None) -> list[dict]:
+    d = raw.get("data", raw)
+    pct = d["Future Percentile Prices"]["Category"][category]
+    occ = d["Future Occ/New/Canc"]["Category"][category]
+    pct_labels = d["Future Percentile Prices"]["Labels"]
+    occ_labels = d["Future Occ/New/Canc"]["Labels"]
+    # occ series come wrapped one level deeper than percentile series
+    occ_by_label = {lab: occ["Y_values"][i][0] if isinstance(occ["Y_values"][i][0], list) else occ["Y_values"][i]
+                    for i, lab in enumerate(occ_labels)}
+    occ_dates = {dt: i for i, dt in enumerate(occ["X_values"])}
+    rows = []
+    for i, dt in enumerate(pct["X_values"]):
+        if days is not None and i >= days:
+            break
+        row = {"date": dt}
+        for lab, col in NB_PCT_SERIES.items():
+            j = pct_labels.index(lab)
+            row[col] = _r(pct["Y_values"][j][i], _nb_kind(col))
+        k = occ_dates.get(dt)
+        for lab, col in NB_OCC_SERIES.items():
+            row[col] = _r(occ_by_label[lab][k], _nb_kind(col)) if k is not None else None
+        rows.append(row)
+    return rows
+
+
+def _nb_facts_from_tables(meta: dict, daily: list[dict], monthly: list[dict], kpi: list[dict]) -> dict:
+    n30 = daily[:30]
+    def mean(col, kind):
+        vals = [float(r[col]) for r in n30 if r.get(col) not in (None, "")]
+        return _r(sum(vals) / len(vals), kind) if vals else None
+    def total(col):
+        return int(sum(float(r[col]) for r in n30 if r.get(col) not in (None, "")))
+    l365 = next((r for r in kpi if r["month"] == "Last 365 Days"), None)
+    latest = next((r for r in reversed(kpi) if not str(r["month"]).startswith("Last")), None)
+    return {
+        "category": str(meta.get("category")),
+        "listings_used": _r(meta.get("listings_used"), "count"),
+        "currency": meta.get("currency"),
+        "daily_rows": len(daily),
+        "daily_first": daily[0]["date"] if daily else None,
+        "daily_last": daily[-1]["date"] if daily else None,
+        "base_p25": _r(meta.get("base_p25"), "nb_price"), "base_p50": _r(meta.get("base_p50"), "nb_price"),
+        "base_p75": _r(meta.get("base_p75"), "nb_price"), "base_p90": _r(meta.get("base_p90"), "nb_price"),
+        "p50_next30_mean": mean("p50", "nb_price"), "p90_next30_mean": mean("p90", "nb_price"),
+        "booked_med_next30_mean": mean("booked_med", "nb_price"),
+        "occ_next30_mean": mean("occ", "nb_pct"), "occ_stly_next30_mean": mean("occ_stly", "nb_pct"),
+        "occ_ly_next30_mean": mean("occ_ly", "nb_pct"),
+        "new_bk_next30_sum": total("new_bk"), "avail_next30_mean": mean("avail", "count"),
+        "p50_by_date_digest": _digest((r["date"], r["p50"]) for r in daily),
+        "occ_by_date_digest": _digest((r["date"], r["occ"]) for r in daily),
+        "kpi_months": len(kpi),
+        "kpi_booking_window_l365": _r(l365["booking_window"], "count") if l365 else None,
+        "kpi_los_l365": _r(l365["los"], "count") if l365 else None,
+        "kpi_pickup7_latest": _r(latest["pickup7"], "count") if latest else None,
+        "monthly_p50_digest": _digest((r["month"], r["p50"]) for r in monthly),
+    }
+
+
+def neighborhood_facts_full(raw: dict, category: str, days: int | None = None) -> dict:
+    d = raw.get("data", raw)
+    base = d["Summary Table Base Price"]["Category"][category]["Y_values"]
+    meta = {"category": category, "currency": d.get("currency"),
+            "listings_used": d["Future Percentile Prices"]["Category"][category].get("Listings Used"),
+            "base_p25": base[0], "base_p50": base[1], "base_p75": base[2], "base_p90": base[3]}
+    daily = neighborhood_daily_from_raw(raw, category, days)
+    mp = d["Future Percentile Prices Monthly"]["Category"][category]
+    mlabels = d["Future Percentile Prices"]["Labels"]
+    monthly = [{"month": m, **{col: _r(mp["Y_values"][mlabels.index(lab)][i], _nb_kind(col))
+                               for lab, col in NB_PCT_SERIES.items()}}
+               for i, m in enumerate(mp["X_values"])]
+    kp = d["Market KPI"]["Category"][category]
+    klabels = d["Market KPI"]["Labels"]
+    kpi = [{"month": m, **{col: _r(kp["Y_values"][klabels.index(lab)][i], "count")
+                           for lab, col in NB_KPI_SERIES.items()}}
+           for i, m in enumerate(kp["X_values"])]
+    return _nb_facts_from_tables(meta, daily, monthly, kpi)
+
+
+def neighborhood_facts_reduced(text: str) -> dict:
+    """Parse: '# ' header lines, then '## daily', '## monthly', '## kpi' CSV blocks."""
+    meta, blocks, cur = {}, {}, None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            cur = line[3:].strip(); blocks[cur] = []
+        elif line.startswith("# "):
+            for kv in line[2:].split():
+                if "=" in kv:
+                    k, v = kv.split("=", 1); meta[k] = v
+        elif line.strip() and cur:
+            blocks[cur].append(line)
+    def table(name, required):
+        rows = list(csv.DictReader(io.StringIO("\n".join(blocks.get(name, [])))))
+        if rows and any(c not in rows[0] for c in required):
+            raise ValueError(f"{name} block missing columns: {[c for c in required if c not in rows[0]]}")
+        return rows
+    daily = table("daily", NB_DAILY_COLUMNS)
+    if not daily:
+        raise ValueError("no daily block in reduced output")
+    def num(rows, cols_kinds):
+        for r in rows:
+            for c, k in cols_kinds:
+                r[c] = _r(r[c], k) if r.get(c, "") != "" else None
+    num(daily, [(c, _nb_kind(c)) for c in NB_DAILY_COLUMNS if c != "date"])
+    monthly = table("monthly", NB_MONTHLY_COLUMNS)
+    num(monthly, [(c, _nb_kind(c)) for c in NB_MONTHLY_COLUMNS if c != "month"])
+    kpi = table("kpi", NB_KPI_COLUMNS)
+    num(kpi, [(c, "count") for c in NB_KPI_COLUMNS if c != "month"])
+    m = {"category": meta.get("category"), "currency": meta.get("currency"),
+         "listings_used": meta.get("listings_used"),
+         "base_p25": meta.get("base_p25"), "base_p50": meta.get("base_p50"),
+         "base_p75": meta.get("base_p75"), "base_p90": meta.get("base_p90")}
+    return _nb_facts_from_tables(m, daily, monthly, kpi)
+
+
 SOURCES = {
     "airroi": (AIRROI_FACTS, airroi_facts_full, airroi_facts_reduced),
+    "neighborhood": (NEIGHBORHOOD_FACTS, neighborhood_facts_full, neighborhood_facts_reduced),
 }
 
 
@@ -181,13 +351,22 @@ def main() -> int:
     ap.add_argument("--full", required=True, help="raw API payload (JSON)")
     ap.add_argument("--reduced", required=True, help="reducer output (text)")
     ap.add_argument("--subject-id", default=None)
+    ap.add_argument("--category", default=None, help="neighborhood: bedroom category, e.g. 4")
+    ap.add_argument("--days", type=int, default=None, help="neighborhood: forward window the reducer used")
     args = ap.parse_args()
 
     names, f_full, f_red = SOURCES[args.source]
     try:
         raw_text = open(args.full, encoding="utf-8").read()
         raw = json.loads(raw_text[raw_text.find("{"):])
-        full = f_full(raw, args.subject_id) if args.source == "airroi" else f_full(raw)
+        if args.source == "airroi":
+            full = f_full(raw, args.subject_id)
+        elif args.source == "neighborhood":
+            if not args.category:
+                raise ValueError("--category is required for neighborhood")
+            full = f_full(raw, args.category, args.days)
+        else:
+            full = f_full(raw)
         reduced = f_red(open(args.reduced, encoding="utf-8").read())
     except Exception as e:  # noqa: BLE001
         print(f"COULD NOT CHECK: {e}", file=sys.stderr)

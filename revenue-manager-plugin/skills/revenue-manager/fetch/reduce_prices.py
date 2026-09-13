@@ -28,7 +28,7 @@ USAGE
     --reason-dates  targeted `reason` pull for named dates only; the expensive
                     field, fetched for the handful of dates you will act on
 
-    Raw responses are cached under --cache-dir (default ./.pl_cache) so a later
+    Raw responses are cached under --cache-dir (default ~/.cache/revenue-manager/pricelabs) so a later
     reason pull or a re-run costs no extra API calls. Nothing raw is printed.
 
 CREDENTIALS
@@ -410,7 +410,9 @@ def main() -> None:
     ap.add_argument("--tier", choices=["a", "b", "both"], default="a")
     ap.add_argument("--reason-dates", help="comma-separated YYYY-MM-DD; pulls reason for these only")
     ap.add_argument("--gap-pct", type=float, default=12.0, help="exception threshold (default 12)")
-    ap.add_argument("--cache-dir", default=".pl_cache")
+    from _cache import cache_dir as _cd
+    ap.add_argument("--cache-dir", default=_cd("pricelabs"),
+                    help="raw payload cache (default ~/.cache/revenue-manager/pricelabs)")
     ap.add_argument("--env-file", type=Path)
     ap.add_argument("--refresh", action="store_true", help="ignore cache")
     ap.add_argument("--no-metrics", action="store_true",

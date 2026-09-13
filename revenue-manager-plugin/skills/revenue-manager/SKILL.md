@@ -349,21 +349,35 @@ For each property, compute:
 
 Parse heavy JSON with python3 into compact tables before reporting. For PriceLabs prices this is not optional and not manual — use the Step 4.0 reducer (`fetch/reduce_prices.py`), which keeps the raw payload on disk and out of context entirely.
 
-### Step 4a — PriceLabs neighborhood data = the comp engine (verified live)
+### Step 4a — PriceLabs neighborhood data = the comp engine (via the reducer, never the raw MCP)
 
-`pricelabs_get_neighborhood_data` is the quantitative comp set. Confirmed live behavior:
-- **~85-comp set**, percentiles by bedroom (**25 / 50 / 75 / 90**)
-- **365-day forward ASK-price curve** (listed nightly, NOT cleared)
-- **Market occupancy + same-time-last-year (STLY) + 7-day pickup**
-- **Native currency**
+**Do not call `pricelabs_get_neighborhood_data` directly.** One response is ~118,000 tokens:
+every bedroom category the market has, 540 days of daily occupancy of which the first 180 are
+the past, and ten series where the decision reads seven. Run the reducer instead:
 
-Key structures:
-```python
-data['data']['Summary Table Base Price']['Category']   # Comp by bedroom count
-data['data']['Future Occ/New/Canc']['Category']        # Market occ + STLY + pickup
-data['data']['Future Percentile Prices']['Category']    # 25/50/75/90 percentile bands
+```bash
+python3 fetch/reduce_neighborhood.py --listing <pricelabs id> --bedrooms <N> \
+    --lat <lat> --lng <lng> --currency <PMS currency>        # add --days 90 for a triage pass
 ```
-Pull the comp count here and feed it to the thin-comp transparency guard (2.3). Always report N.
+
+It prints the listing's own bedroom category only, three blocks: `## daily` (the 365-day
+forward ask curve p25/p50/p75/p90, the median BOOKED price so ask-vs-cleared is visible,
+N bookings, market occupancy, occupancy STLY for pacing at equal lead time, occupancy LY for
+how the date finished, new bookings and cancellations for pickup, available listings for
+supply), `## monthly` (the same percentiles by month), `## kpi` (booking window, LOS, 7-day
+pickup and STLY, by month plus trailing 365/730). ~14,000 tokens at 365 days, ~4,500 at 90.
+
+**What it guarantees:**
+
+| Guarantee | Failure it prevents |
+|---|---|
+| The bedroom category must exist in the market's data or it exits 2 | Pricing a 1BR against the 3BR curve because that was the nearest category present |
+| `--currency` must match what the payload reports or it exits 2 | A cross-border market feeding foreign-currency percentiles into a native-currency decision |
+| Cache keyed by location to ~1 km when `--lat/--lng` are given; the header names the key | Eight properties in three markets making eight identical calls; a re-run inside `--ttl-days` (default 1) making any |
+| `fetch/factcheck.py neighborhood` proves 25 decision facts survive, per-date digests included; it runs in the smoke test | Trimming a series that looked like noise and inverting a verdict (August 2026) |
+
+Read `listings_used=` from the header and feed it to the thin-comp transparency guard (2.3).
+Always report N. Exit **2 means "market unverified this run"**, never "no market".
 
 ## Step 4.8 — Named comps via the reducer, never the raw MCP (AirROI, optional)
 
@@ -801,9 +815,11 @@ If the detected PMS exposes no calendar-write tool, push via the pricing-tool MC
 Key structures:
 ```python
 # Neighborhood = the comp engine (~85 comps, percentiles by bedroom, native currency)
+# Pull it through fetch/reduce_neighborhood.py (Step 4a), never via the raw MCP tool.
+# Raw structure, for reference only:
 data['data']['Summary Table Base Price']['Category']   # Comp by bedroom count
-data['data']['Future Occ/New/Canc']['Category']        # Market occ + STLY + 7-day pickup
-data['data']['Future Percentile Prices']['Category']    # 25/50/75/90 percentile bands
+data['data']['Future Occ/New/Canc']['Category']        # Market occ + STLY + 7-day pickup (10 series, 540 days)
+data['data']['Future Percentile Prices']['Category']    # 25/50/75/90 + median booked + N (6 series, 360 days)
 
 # Per-date pricing (forward ASK curve = what PriceLabs pushes to the PMS)
 listing['data']  # Array of date objects

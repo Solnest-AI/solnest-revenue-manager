@@ -62,7 +62,8 @@ ENV_CANDIDATES = [
     "./mcp-servers/airroi/.env", "../mcp-servers/airroi/.env",
     "../../../../mcp-servers/airroi/.env", "~/.claude/mcp-servers/airroi/.env",
 ]
-CACHE_DIR = os.environ.get("RC_CACHE_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+from _cache import cache_dir  # noqa: E402
+CACHE_DIR = cache_dir("airroi")
 
 
 class CannotProduce(Exception):

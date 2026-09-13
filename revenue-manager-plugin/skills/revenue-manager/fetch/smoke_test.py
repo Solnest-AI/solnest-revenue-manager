@@ -92,7 +92,8 @@ def run_reducer(fixture, *extra):
     with tempfile.TemporaryDirectory() as td:
         env = dict(os.environ, AIRROI_API_KEY="offline-test-key-never-used")
         params = {"bedrooms": 4, "baths": 2.0, "guests": 8, "radius": 0, "latitude": 50.88, "longitude": -119.9}
-        rc.CACHE_DIR = td
+        # the subprocess resolves RC_CACHE_DIR/airroi via _cache; seed exactly there
+        rc.CACHE_DIR = os.path.join(td, "airroi"); os.makedirs(rc.CACHE_DIR, exist_ok=True)
         blob = {"pulled_at": "2026-01-01T00:00:00+00:00", "request": params, "listings": fixture["listings"]}
         json.dump(blob, open(rc.cache_path(params), "w"))
         p = subprocess.run([sys.executable, str(HERE / "reduce_comps.py"), "--bedrooms", "4", "--baths", "2",
@@ -101,9 +102,13 @@ def run_reducer(fixture, *extra):
         return p
 
 # reduce_comps reads CACHE_DIR at import; make the subprocess honour the temp dir
-rc_src = open(HERE / "reduce_comps.py").read()
-check("reducer honours RC_CACHE_DIR override for tests",
-      'os.environ.get("RC_CACHE_DIR")' in rc_src, "add env override to CACHE_DIR")
+import _cache  # noqa: E402
+_probe = os.environ.get("RC_CACHE_DIR")
+os.environ["RC_CACHE_DIR"] = "/tmp/rc-probe-xyz"
+check("caches resolve under RC_CACHE_DIR when set (never inside the plugin tree)",
+      _cache.cache_dir("airroi") == "/tmp/rc-probe-xyz/airroi")
+os.environ.pop("RC_CACHE_DIR"); os.environ.update({"RC_CACHE_DIR": _probe} if _probe else {})
+check("default cache root is under the user cache dir, not the plugin", "revenue-manager" in _cache.cache_dir() and str(HERE) not in _cache.cache_dir())
 
 p = run_reducer(fx, "--currency", "CAD")
 check("reducer exits 0 on a clean CAD set", p.returncode == 0, p.stderr[:200])
@@ -112,16 +117,21 @@ check("output has header + medians + CSV", out.count("\n") >= 8 and out.startswi
 check("description/photos are NOT in the default output", "x" * 50 not in out and "photo" not in out)
 
 full = fc.airroi_facts_full(fx)
-red = fc.airroi_facts_reduced(out)
-bad = fc.compare(full, red, fc.AIRROI_FACTS)
+try:
+    red = fc.airroi_facts_reduced(out)
+    bad = fc.compare(full, red, fc.AIRROI_FACTS)
+except Exception as e:  # noqa: BLE001
+    red, bad = {}, [f"reduced output unparseable: {e}"]
 check("all 13 fact classes preserved (no subject)", not bad, "; ".join(bad))
-check("median ADR from reduced CSV equals median at decision precision", red["adr_median"] == full["adr_median"], f"{red['adr_median']} vs {full['adr_median']}")
+check("median ADR from reduced CSV equals median at decision precision", red.get("adr_median") == full["adr_median"], f"{red.get('adr_median')} vs {full['adr_median']}")
 
 p2 = run_reducer(fx, "--currency", "CAD", "--subject-id", "9999", "--subject-name", "subject")
 check("subject exclusion exits 0", p2.returncode == 0, p2.stderr[:200])
 full2 = fc.airroi_facts_full(fx, subject_id="9999")
-red2 = fc.airroi_facts_reduced(p2.stdout)
-bad2 = fc.compare(full2, red2, fc.AIRROI_FACTS)
+try:
+    red2 = fc.airroi_facts_reduced(p2.stdout); bad2 = fc.compare(full2, red2, fc.AIRROI_FACTS)
+except Exception as e:  # noqa: BLE001
+    red2, bad2 = {"subject_in_set": None, "subject_rank_revenue": None, "comp_count": None}, [f"unparseable: {e}"]
 check("all 13 fact classes preserved (subject excluded)", not bad2, "; ".join(bad2))
 check("subject reported in set at rank 6 of 6", red2["subject_in_set"] and red2["subject_rank_revenue"] == 6,
       f"{red2['subject_in_set']} {red2['subject_rank_revenue']}")
@@ -142,6 +152,51 @@ check("--full includes description column", "description" in p5.stdout.split("\n
 p6 = subprocess.run([sys.executable, str(HERE / "reduce_comps.py"), "--bedrooms", "4", "--baths", "2", "--guests", "8"],
                     capture_output=True, text=True)
 check("no location -> argparse error, exit 2", p6.returncode == 2)
+
+# (summary moved to the end of the file)
+
+# --- neighborhood reducer + fact-class harness -----------------------------
+print("\nreduce_neighborhood + factcheck smoke test\n")
+import reduce_neighborhood as rn  # noqa: E402
+
+nfx = json.load(open(HERE / "test_fixture_neighborhood.json"))
+
+def run_nb(*extra, seed=True):
+    with tempfile.TemporaryDirectory() as td:
+        env = dict(os.environ, RC_CACHE_DIR=td, PRICELABS_API_KEY="offline-test-key-never-used")
+        if seed:
+            os.makedirs(os.path.join(td, "neighborhood"), exist_ok=True)
+            for name in ("nb_loc_50.88_-119.9_smartbnb.json", "nb_fixture-_smartbnb.json"):
+                json.dump({"pulled_at": "2026-01-01T00:00:00+00:00", "listing": "fixture-listing", "pms": "smartbnb",
+                           "data": nfx["data"]}, open(os.path.join(td, "neighborhood", name), "w"))
+        return subprocess.run([sys.executable, str(HERE / "reduce_neighborhood.py"), "--listing", "fixture-listing",
+                               "--ttl-days", "36500", *extra], capture_output=True, text=True, env=env)
+
+p = run_nb("--bedrooms", "4", "--lat", "50.88", "--lng", "-119.9", "--currency", "CAD")
+check("neighborhood reducer exits 0", p.returncode == 0, p.stderr[:200])
+check("three blocks present", all(f"## {b}" in p.stdout for b in ("daily", "monthly", "kpi")), p.stdout[:200])
+check("history dates are NOT in the daily block", "2026-12-2" not in p.stdout.split("## daily")[1].split("## monthly")[0])
+check("only the requested category's base prices", "base_p50=790" in p.stdout and "base_p50=400" not in p.stdout)
+nfull = fc.neighborhood_facts_full(nfx, "4")
+nred = fc.neighborhood_facts_reduced(p.stdout)
+nbad = fc.compare(nfull, nred, fc.NEIGHBORHOOD_FACTS)
+check("all 25 neighborhood fact classes preserved", not nbad, "; ".join(nbad))
+check("per-date p50 digest matches (every daily value survived)", nred["p50_by_date_digest"] == nfull["p50_by_date_digest"])
+
+p2 = run_nb("--bedrooms", "4", "--lat", "50.88", "--lng", "-119.9", "--days", "5")
+nfull5 = fc.neighborhood_facts_full(nfx, "4", 5)
+nred5 = fc.neighborhood_facts_reduced(p2.stdout)
+check("--days 5 -> exactly 5 daily rows", nred5["daily_rows"] == 5, str(nred5["daily_rows"]))
+check("--days 5 -> all 25 facts preserved for the shorter window", not fc.compare(nfull5, nred5, fc.NEIGHBORHOOD_FACTS))
+
+p3 = run_nb("--bedrooms", "7", "--lat", "50.88", "--lng", "-119.9")
+check("absent bedroom category -> exit 2, never substituted", p3.returncode == 2 and "3', '4'" in p3.stderr, p3.stderr[:120])
+p4 = run_nb("--bedrooms", "4", "--lat", "50.88", "--lng", "-119.9", "--currency", "USD")
+check("currency mismatch -> exit 2", p4.returncode == 2 and p4.stdout.strip() == "")
+p5 = run_nb("--bedrooms", "3", "--lat", "50.8849", "--lng", "-119.9021")
+check("second listing ~300 m away shares the market cache entry (cache=hit)", "cache=hit" in p5.stdout and "category=3" in p5.stdout, p5.stdout[:160] + p5.stderr[:120])
+p6 = run_nb("--bedrooms", "4", seed=False)
+check("no cache + no real key -> exit 2, not a crash", p6.returncode == 2, p6.stderr[:120])
 
 # --- summary ----------------------------------------------------------------
 print()
