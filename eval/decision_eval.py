@@ -611,6 +611,33 @@ def cmd_report(args) -> int:
                 continue
             lines.append(f"| `{k}` | {v['status']} | {v['severity'] or ''} | {v['reduced']} | {v['full']} |")
         lines.append("")
+        # facts vs ground truth computed from the raw caches (adjudication by numbers)
+        try:
+            from truth import check_facts, truth_for  # noqa: WPS433
+            tr = truth_for(json.load(open(od / "bundles" / id8 / "meta.json")))
+        except Exception as e:  # noqa: BLE001
+            tr = {}; lines.append(f"_truth unavailable: {e}_\n")
+        if tr:
+            lines.append("**Reported facts vs ground truth** (computed from the raw caches; ok = within tolerance)\n")
+            lines.append("| rep | " + " | ".join(k for k in tr if k in ("invisible_nights", "markup_median", "min_stay_mismatches", "pct_dates_at_floor", "market_p50_median_next_90", "market_occupancy_next_90_pct", "comp_count", "subject_revenue_rank", "comp_median_adr", "cleared_adr_trailing_365")) + " | score |")
+            keys = [k for k in tr if k in ("invisible_nights", "markup_median", "min_stay_mismatches", "pct_dates_at_floor", "market_p50_median_next_90", "market_occupancy_next_90_pct", "comp_count", "subject_revenue_rank", "comp_median_adr", "cleared_adr_trailing_365")]
+            lines.append("|---|" + "---|" * (len(keys) + 1))
+            lines.append("| truth | " + " | ".join(str(tr[k]) for k in keys) + " | |")
+            fact_scores = {"reduced": [], "full": []}
+            for cond, reps in (("reduced", red), ("full", ful)):
+                for r in reps:
+                    cf = check_facts(r["decision"], tr)
+                    cells = []
+                    for k in keys:
+                        if k in cf:
+                            rv, tv, ok = cf[k]; cells.append(f"{rv}{'' if ok else ' **X**'}")
+                        else:
+                            cells.append("")
+                    n_ok = sum(1 for v in cf.values() if v[2]); n = len(cf)
+                    fact_scores[cond].append((n_ok, n))
+                    lines.append(f"| {cond} r{r['rep']} | " + " | ".join(cells) + f" | {n_ok}/{n} |")
+            summary["listings"][id8]["fact_scores"] = fact_scores
+            lines.append("")
         lines.append("<details><summary>facts per rep (for adjudication)</summary>\n")
         for cond, reps in (("reduced", red), ("full", ful)):
             for r in reps:

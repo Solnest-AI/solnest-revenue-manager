@@ -264,7 +264,8 @@ def print_calendar_block(lid: str, name: str, c: dict, out) -> None:
           f"owner_stays={c['owner_stay_count']} paired={c['paired_dates']} "
           f"markup_median={c['markup_median'] if c['markup_median'] is not None else 'none'} "
           f"markup_stdev={c['markup_stdev'] if c['markup_stdev'] is not None else 'none'} "
-          f"min_stay_mismatch={c['min_stay_mismatch']} drift={len(c['drift'])}", file=out)
+          f"min_stay_mismatch={c['min_stay_mismatch']} drift={len(c['drift'])} "
+          f"compared_at={c.get('compared_at', 'live')}", file=out)
     if c["markup_stdev"] is not None and c["markup_stdev"] > 0.05:
         print("# WARNING markup spread > 5%: sync is broken or markup logic is misconfigured (SKILL Step 5)", file=out)
     if c["pms_min_mode"] is not None and c["pms_min_mode"] >= 28:
@@ -340,11 +341,18 @@ def main() -> int:
             continue
         bundle_path = os.path.join(cache_dir("reconcile"), f"{lid[:8]}_{d_from}_{d_to}.json")
         days = None
+        compared_at = "live"
         if not args.no_cache and os.path.isfile(bundle_path):
             try:
                 b = json.load(open(bundle_path))
                 if time.time() - datetime.fromisoformat(b["pulled_at"]).timestamp() <= args.ttl_days * 86400:
-                    days = b["pms_days"]
+                    # ATOMIC PAIR. The PMS calendar and the PriceLabs rows must come from the
+                    # same instant. Serving a cached calendar against freshly fetched PriceLabs
+                    # prices turned every PriceLabs refresh in between into "drift" (measured:
+                    # 0 drift dates at pull time, 5 three hours later on the same listing, with
+                    # ratios up to 1.31 that were nothing but the stale copy). Use the cached
+                    # pair, and say so. --no-cache refetches both.
+                    days, pl_rows, compared_at = b["pms_days"], b.get("pl_rows", pl_rows), b["pulled_at"]
             except Exception:  # noqa: BLE001
                 days = None
         try:
@@ -361,7 +369,9 @@ def main() -> int:
             continue
 
         r = reconcile(days, pl_rows)
-        cal_blocks.append((lid, name, calendar_rows(days, pl_rows)))
+        c = calendar_rows(days, pl_rows)
+        c["compared_at"] = compared_at
+        cal_blocks.append((lid, name, c))
         value = sum(night_value(d) for d in r["invisible"])
         total_missed += len(r["invisible"])
         total_value += value
