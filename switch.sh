@@ -57,8 +57,24 @@ else:
 if not (pathlib.Path(target) / ".claude-plugin" / "marketplace.json").exists():
     sys.exit(f"refusing: no .claude-plugin/marketplace.json under {target}")
 
-shutil.copy(p, p.with_suffix(f".json.bak-{datetime.datetime.now():%Y%m%d-%H%M%S}"))
+stamp = f"{datetime.datetime.now():%Y%m%d-%H%M%S}"
+shutil.copy(p, p.with_suffix(f".json.bak-{stamp}"))
 mkts[mkt] = {"source": {"source": "directory", "path": target}}
 p.write_text(json.dumps(d, indent=2) + "\n")
-print(f"switched to {mode.upper()} ({version_of(target)})\n  path: {target}\n\nNow: quit and reopen Claude Code, then run /revenue-manager.")
+
+# Claude Code keeps its own registry of marketplaces; settings.json alone is
+# not enough, the registry still points at the old checkout until updated.
+reg = pathlib.Path.home() / ".claude" / "plugins" / "known_marketplaces.json"
+if reg.exists():
+    shutil.copy(reg, reg.with_suffix(f".json.bak-{stamp}"))
+    r = json.loads(reg.read_text())
+    entry = r.setdefault(mkt, {})
+    entry["source"] = {"source": "directory", "path": target}
+    entry["installLocation"] = target
+    entry["lastUpdated"] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    reg.write_text(json.dumps(r, indent=2) + "\n")
+
+print(f"switched to {mode.upper()} ({version_of(target)})\n  path: {target}")
+print(f"\nNext: claude plugin update revenue-manager@{mkt}   (re-syncs the plugin cache)")
+print("Then: quit and reopen Claude Code, then run /revenue-manager.")
 PY
