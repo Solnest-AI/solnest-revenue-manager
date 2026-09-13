@@ -24,7 +24,7 @@ It also fixes three quality problems the MCP path has:
 USAGE
 -----
     python3 reduce_comps.py --bedrooms 4 --baths 2 --guests 8 \
-        --lat 50.8826 --lng -119.896 --currency CAD --subject-id 1523418129850069170
+        --lat 50.8826 --lng -119.896 --currency CAD --subject-id <your-airbnb-listing-id>
 
     --address "..."   instead of --lat/--lng
     --radius N        miles, widens thin markets
