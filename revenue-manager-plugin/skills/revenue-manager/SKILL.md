@@ -29,7 +29,7 @@ Your job, in order:
 2. Run the **safety layer** — the guardrail that wraps every number you produce
 3. Read prior decisions and changes from Supabase for compounding context
 4. Pull a full year forward + all available history (PMS + PriceLabs in parallel)
-5. Cross-reference PMS reality vs PriceLabs recommendations (empirically markup-aware, calendar-as-ground-truth)
+5. Cross-reference PMS reality vs PriceLabs recommendations (calendar = ground truth, three price layers: net / ask per channel / cleared)
 6. Apply the **STR revenue framework** (flywheel → pricing stack → lead time → decision framework → red flags)
 7. Recommend specific adjustments — **recommend-only, always human-approved**
 8. On approval, push changes and write an audit trail
@@ -257,9 +257,20 @@ From the history, extract:
 - **Stored bounds** (`min_price` / `max_price`) — feed straight into the floor/ceiling guard (2.1)
 - **Change velocity** — how often has each lever moved? What worked?
 - **Decision consistency** — are current prices still aligned with the last decision's strategy?
-- **Empirical markup** from `property_config.settings.markup_pct` (default: measure it, see Step 5)
+- **Channel markups** from `property_config.settings.channel_markup_pct` (per channel; Step 3.2 discovers or asks once; Step 5 applies them)
 
 If `property_config` is empty for a property, flag it — you'll recommend a setup pass (seed bounds from live PriceLabs min/max) after analysis.
+
+### 3.2 — Channel markup: discover by API, else ask once, then store (every PMS, every operator)
+
+Most PMSs add a per-channel markup to the nightly rate on the way to the OTA so the host nets the same after platform fees (Hospitable calls it "Listing markups"; a typical set is Airbnb 18%, VRBO 20%, Booking.com 22%, direct 0%). The pricing tool's price and the PMS calendar are both **NET** of it; the guest-facing ask on each channel is `net x (1 + markup)`. Every market comparison in this runbook is against guest-facing numbers (PriceLabs neighborhood percentiles and AirROI comps are what guests see), so a run that does not know the markup calls every property "below market" by roughly the markup and recommends raises that are not there.
+
+Resolve it in this order, once per property, and store the result:
+1. `property_config.settings.channel_markup_pct` already holds a map (`{"airbnb": 18, "vrbo": 20, "booking": 22, "direct": 0}`): use it. A stored `{"all": 0}` means the operator confirmed there is no markup; do not ask again.
+2. The PMS exposes it by API: read it. The per-PMS row is in `references/pms-fields.md` ("Channel markup by PMS"). As of 2026-09 only Hospitable is verified, and it does **not** expose it (not on the property object under any `include`, not on `/properties/{id}/pricing`, which carries per-channel fees but no nightly markup).
+3. Otherwise **ask the operator, once, before Step 4**, and tell them exactly where to look. Hospitable: Settings → Preferences → Properties (platform default) and Properties → [property] → Pricing, "Listing markups" (per-listing override), per Hospitable's help article. Ask for the percentage per channel and whether any property overrides the default. Write the answer to `property_config.settings.channel_markup_pct` for every property (shape in `references/audit-write.md`) and say you did. If the audit tables are unavailable this run, keep the answer for the run and say it was not stored.
+
+Never infer the markup from `PMS calendar ÷ PriceLabs price`: that ratio is the **sync check** (Step 5) and is 1.0 whenever the push works. A sanity check after the fact is fine: the realized Airbnb nightly rate ÷ net price on recently booked nights should sit near `1 + markup_airbnb` (measured 1.16 against a stated 18% on one listing); a large gap means a discount or override is in play, not a different markup.
 
 ## Step 4 — Parallel pull (spawn in one message with two Agent calls)
 
@@ -328,12 +339,12 @@ Via PriceLabs (primary), pull:
 - **Per-date recommended prices** for the next 365 days, with reason factors (`pricelabs_get_listing_prices`) — this is the forward **ASK** curve PriceLabs pushes to the PMS
 - **Neighborhood / market data** via `pricelabs_get_neighborhood_data` — **this IS the comp engine** (full structure in Step 4a)
 - **Reservation history, via the reducer, never the raw tool.** `pricelabs_list_reservations` returns every booking as a full record with the guest's name, ~13,000 tokens per listing for two years. Run `python3 fetch/reduce_reservations.py --listing <id> --currency <PMS currency>` instead: ~900 tokens carrying the CLEARED/realized rate by month (nights, revenue, ADR), lead-time and length-of-stay distributions, channel mix, cancellations, and the individual bookings from the last 14 days (the booked-within-hours red flag needs those). `guestName` is dropped at the parsing boundary and never cached. Cached one day; `fetch/factcheck.py reservations` proves 12 facts survive. Exit 2 means history is unverified this run, not empty.
-- All active overrides / DSOs / custom rates (`pricelabs_list_overrides`)
+- All active overrides / DSOs / custom rates **via the reducer**: `python3 fetch/reduce_overrides.py --listing <id> --pms <pms>`. It prints one row per run of consecutive dates with the same price, type, min-stay and reason (measured: 281 raw rows to 30 runs, 21x smaller) and drops past dates. `dates=0` in its header is a valid "no overrides"; exit 2 means the source could not be read, never "none". Do not call `pricelabs_list_overrides` directly for a full listing
 - `last_refreshed_at` / freshness markers (feeds the freshness guard 2.7)
 
 For each property, compute:
 - Recommended ASK price trajectory by month (next 12 months)
-- Distance from comp-set median (percentile position) by bedroom count
+- Distance from comp-set median (percentile position) by bedroom count, measured on **ASK_airbnb = net x (1 + markup_airbnb)** from Step 3.2, never on the net price
 - Number of dates pinned to the min floor (algorithm wants lower) or max ceiling (algorithm is capped — you may be underpriced)
 - **Ask-vs-cleared spread** (calendar/ask vs ADR) — cleared runs materially higher than ask; track both
 
@@ -460,7 +471,7 @@ The gate caches the raw bundle under `~/.cache/revenue-manager/reconcile/` and
   (snake_case), and **silently drops unknown keys**, falling back to a ~15-day default
   window with no error. The gate asserts the echoed range matches the request.
 
-## Step 5 — Ask vs cleared, ground truth, and EMPIRICAL markup (do not assume)
+## Step 5 — Three price layers, ground truth, and the sync check
 
 The PMS calendar price, the PriceLabs recommended price, and realized ADR are three different things. Get them straight before you reason.
 
@@ -474,23 +485,28 @@ The PMS calendar price, the PriceLabs recommended price, and realized ADR are th
 - **Ask** = the calendar/forward-curve listed price.
 - **Cleared / realized = ADR** (PriceLabs listing-prices ADR field + reservations, and the PMS's realized ADR). Cleared runs **materially higher** than ask. Report both; never conflate them.
 
-### Markup — measure it, never assume (the gate already did; read its `## calendar` block)
+### Three price layers (name them in every recommendation)
+
+- **NET** = the PriceLabs price = the PMS calendar price. This is what PriceLabs base / min / max and every recommendation in Step 7 move.
+- **ASK per channel** = `NET x (1 + channel_markup_pct[channel] / 100)` from Step 3.2. This is what a guest sees, and it is the unit PriceLabs neighborhood percentiles and AirROI comps are measured in. Every "distance from market", "pinned to the floor vs market", or "comp rank" statement uses **ASK_airbnb** (or the channel that books most for this listing), never NET.
+- **CLEARED** = the realized nightly rate from the reservation reducer (guest-facing, per channel). Expected `CLEARED ÷ NET` on a channel is `1 + markup`; only the excess over that is a demand signal. "Cleared runs above ask" is the markup working, not a reason to raise.
+
+When the markup is unknown (Step 3.2 could not resolve it and the operator has not answered), say so at the top of the report, present market comparisons as **NET vs guest-facing, uncorrected**, and do not recommend a base raise on the strength of "below market" alone.
+
+### Sync check — PMS calendar vs PriceLabs (the gate already did it; read its `## calendar` block)
 
 **Do not load the raw PMS calendar for this.** Step 4.9 already pulled it (why: `references/evidence.md`, Calendar). Every number below comes from the gate's
 per-listing `## calendar` header line: `paired=` (available nights priced in both systems),
-`markup_median=` (PMS price ÷ PriceLabs price, 1.0 = no markup), `markup_stdev=`, and
-`min_stay_mismatch=`. The `### drift` rows under it are the exact dates where the two
-systems disagree by more than 5% on price, or on min-stay, with the ratio and the reason.
+`markup_median=` (PMS price ÷ PriceLabs price; **expected 1.0**, it is the sync ratio, not the channel markup), `markup_stdev=`,
+`min_stay_mismatch=` and `compared_at=` (both sides come from the same pull; a stale pair is never compared against a fresh one).
+The `### drift` rows under it are the exact dates where the two systems disagree by more than 5% on price, or on min-stay, with the ratio and the reason.
 A `# WARNING markup spread > 5%` line is the "sync is broken" flag; a `# NOTE ... long-term
 rental` line means nightly pricing logic does not apply to that listing.
 
-Original rule, unchanged:
-The PMS calendar price and the PriceLabs price will sometimes differ. Compute the ratio **EMPIRICALLY per property** — do not assume a number:
-- For each property, compute `median(pms_calendar_price ÷ pricelabs_recommended_price)` across the next 90 days of paired prices.
-- **For some properties this is 1.0 (no markup at all)** — cleaning and channel fees are added at the channel, not baked into the nightly calendar price. Don't invent a markup that isn't there.
-- Store the measured ratio in `property_config.settings.markup_pct`. If it's already stored, recompute and reconcile; report drift. If the operator states a markup, treat it as a **confirmation/override of the measured value**, never as the source of truth.
-- If the measured ratio is wildly inconsistent across dates (stdev > 5%), flag it — sync is broken or markup logic is misconfigured.
-- **Never recommend a change to "fix" a price difference that matches the measured markup.** That's the markup working correctly, not drift.
+Rules:
+- A sync ratio of 1.0 means the push works. It says nothing about the channel markup (Step 3.2).
+- A stable ratio other than 1.0 (stdev under 5%) means the PMS itself scales the calendar; store it as `property_config.settings.sync_ratio`, report it, and keep NET = the PMS calendar price for every comparison.
+- Drift dates (ratio off by more than 5%, or min-stay disagreeing) are sync defects: exclude them from pricing this run and name them in the report. **Never recommend a price change to "fix" a drift date**; the fix is the sync.
 
 ## Step 6 — Apply the STR revenue framework
 
@@ -504,7 +520,7 @@ Property:        <name>  (<currency>)
 Change:          <field> from <old (PMS calendar = ground truth)> to <new>   (<+/- % move>)
 Nearest bound:   min <min> / max <max>   <flag if outside or within 5%>
 Comp count:      <N>  (<same-bedroom subset>)
-Ask vs cleared:  ask <calendar> / ADR <cleared>
+Net / Ask / Cleared: net <calendar> / ask(airbnb) <net x (1+markup)> / cleared ADR <realized>
 Reasoning:       <plain-language inputs — comps, pacing/STLY, events, lead time, orphan>
 Prior attempts:  <from pricelabs_change_log, if any>
 Expected impact: <occupancy % / RevPAR direction>
@@ -555,7 +571,7 @@ AirROI, RankBreeze, Turno and Breezeway: tool names, caveats, what each adds. Re
 - **Recommend-only in v1. No silent writes.** Every change clears the approval gate first.
 - **PMS calendar = ground truth** for what's listed. Per property, measure which PriceLabs field matches it before trusting it (don't assume `user_price` is current).
 - **Track ask (calendar) AND cleared (ADR) separately.** Cleared runs higher.
-- **Markup is measured per property, never assumed.** 1.0 (no markup) is common and valid; operator input confirms/overrides the measured value.
+- **The channel markup is discovered or asked once, then stored; it is never inferred from the calendar.** PriceLabs and the PMS calendar are NET; the guest sees NET x (1 + markup). Compare ASK to the market, never NET (Step 3.2, Step 5).
 - **Hospitable history → `hospitable_list_transactions`** (reservations endpoint is forward-only).
 - **Hospitable calendar: read cents, write dollars** — convert and assert before push.
 - **Resolve the write tool from detected stack** — never assume Hospitable.

@@ -38,8 +38,8 @@ ON CONFLICT (property_id, snapshot_date) DO UPDATE SET
   raw_data      = EXCLUDED.raw_data;
 ```
 
-### Property config setup / update (bounds, markup, targets, seasons)
-Write when the user configures markup, min/base/max bounds (including a plain-English bound override), targets, or season months:
+### Property config setup / update (bounds, channel markups, targets, seasons)
+Write when the user configures channel markups, min/base/max bounds (including a plain-English bound override), targets, or season months:
 ```sql
 INSERT INTO property_config
   (property_id, display_name, base_price, min_price, max_price, settings)
@@ -55,7 +55,8 @@ ON CONFLICT (property_id) DO UPDATE SET
 **Recommended `settings` jsonb shape:**
 ```jsonc
 {
-  "markup_pct": 0.0,                  // measured empirically; 0.0 = no nightly markup (fees at channel)
+  "channel_markup_pct": {"airbnb": 18, "vrbo": 20, "booking": 22, "direct": 0},  // Step 3.2: from the PMS API or the operator, never inferred
+  "sync_ratio": 1.0,                  // Step 5 sync check: PMS calendar / PriceLabs, expected 1.0
   "max_delta_pct": 0.25,
   "pms_platform": "hospitable",
   "pricing_tool": "pricelabs",
@@ -66,7 +67,7 @@ ON CONFLICT (property_id) DO UPDATE SET
   "shoulder_months":[4, 5, 9, 10],
   "off_months":     [1, 2, 3, 11],
   "weekend_premium_pct": 0.30,        // 20–40% band; 0.30 is a starting default
-  "notes": "markup measured empirically — 0.0 means no nightly markup; fees added at channel"
+  "notes": "channel markups from the PMS markup panel, stated by the operator at setup"
 }
 ```
 

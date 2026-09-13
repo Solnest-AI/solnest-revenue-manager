@@ -21,6 +21,30 @@
   (`--start`).
 - **`eval/`: decision-level eval.** Full raw payloads vs reducer output, same model, same
   runbook, same snapshot, mechanical grading with noise attribution. See `eval/README.md`.
+  First run (8 properties, 24 reduced reps + 16 full reps, `claude-opus-5`, effort xhigh):
+  2 of 8 properties carried an attributable HARD divergence and both were judgment calls on
+  identical facts, none from a dropped field; the reduced side's reported facts matched
+  ground truth 89% of the time against 75% for the raw payloads. Three reduced-side blind
+  spots it did expose (pacing, host blocks, orphan gaps) are fixed below.
+- **`reconcile_pms.py` compared a cached PMS calendar against fresh PriceLabs prices**, so
+  any PriceLabs refresh in between read as "drift" (0 drift dates at pull time, 5 three hours
+  later on one listing). The cached pair is now used together; the calendar header carries
+  `compared_at=`. The block also gains `### blocked` (runs of host/user blocks with source
+  and note) and `### gaps` (1-2 open nights boxed in by non-available nights).
+- **`reduce_prices.py` Tier A prints a `[pacing]` line**: occupancy now vs same time last
+  year for the next 30/60/90 nights, blocked nights out of the denominator, `n/a` below 20%
+  STLY coverage.
+- **`reduce_overrides.py`** (new): PriceLabs per-date overrides collapsed into runs of
+  consecutive dates with the same price, type, min-stay and reason (281 rows to 30 runs,
+  21x). Past dates dropped; an empty list is a valid answer. Fact class with a per-run digest.
+- **Runbook: the channel markup layer.** Most PMSs add a per-OTA markup after the calendar,
+  so the pricing tool's price and the calendar are NET and every market number is guest-facing.
+  New Step 3.2 discovers the markup by API where the PMS exposes it (Hospitable does not,
+  verified), otherwise asks once at setup and stores it per channel. Step 5 names three price
+  layers (NET / ASK per channel / CLEARED); market comparisons use ASK. The old "measure the
+  markup as PMS ÷ PriceLabs" rule measured sync fidelity (1.0 everywhere) and biased every
+  recommendation toward "below market, raise". `references/pms-fields.md` gains a per-PMS
+  markup row; `references/audit-write.md` the `channel_markup_pct` settings shape.
 
 ## 1.1.1
 

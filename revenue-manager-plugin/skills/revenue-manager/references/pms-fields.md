@@ -17,6 +17,15 @@ Every supported PMS has a named calendar **write** tool — resolve it from Step
 
 If the detected PMS exposes no calendar-write tool, push via the pricing-tool MCP instead (PriceLabs pushes to the PMS) and say so at the approval gate.
 
+### Channel markup by PMS (Step 3.2: discover by API, else ask once)
+
+| PMS | Exposed by API? | Where the operator finds it |
+|---|---|---|
+| Hospitable | **No** (verified 2026-09-12: not on the property object under any `include`; `GET /properties/{id}/pricing` carries per-channel fees, cleaning, management, pet, extra-guest and deposit, but no nightly markup) | Settings → Preferences → Properties (platform default); Properties → [property] → Pricing → "Listing markups" (per-listing override). Channels: Airbnb, Vrbo, Booking.com, Agoda, Direct. Applied to the nightly rate only, never to fees. |
+| Hostaway, Guesty Pro, Hostfully, OwnerRez, Lodgify, Uplisting, Smoobu | unverified | ask; record the answer in `property_config.settings.channel_markup_pct` and add the verified row here |
+
+The pricing tool and the PMS calendar are NET of the markup on every PMS seen so far; the guest-facing ask is `net x (1 + markup)`.
+
 ### Hostaway
 - Properties → `listings` · Bookings → `reservations`
 - Reservation fields: `id`, `arrivalDate`, `departureDate`, `totalPrice`, `channelName`, `status`
