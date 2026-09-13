@@ -46,6 +46,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import hashlib
 import io
 import json
 import os
@@ -91,10 +92,10 @@ def load_key(env_file: Path | None) -> str:
     if key:
         return key.strip()
     candidates = [env_file] if env_file else []
-    candidates += [
-        Path(__file__).resolve().parents[4] / "mcp-servers" / "pricelabs" / ".env",
-        Path.cwd() / ".env",
-    ]
+    parents = Path(__file__).resolve().parents
+    if len(parents) > 4:  # <repo>/revenue-manager-plugin/skills/revenue-manager/fetch/
+        candidates.append(parents[4] / "mcp-servers" / "pricelabs" / ".env")
+    candidates.append(Path.cwd() / ".env")
     for path in candidates:
         if path and path.is_file():
             for line in path.read_text().splitlines():
@@ -263,7 +264,8 @@ def tier_b(rows: list[dict], gap_pct: float, min_stly_cov: float = 0.20) -> tupl
        read as a catastrophic year-over-year collapse on a new listing).
     """
     months: dict[str, dict] = defaultdict(
-        lambda: {"n": 0, "booked": 0, "blocked": 0, "ask": [], "stly_booked": 0, "stly_cov": 0}
+        lambda: {"n": 0, "booked": 0, "blocked": 0, "ask": [],
+                 "stly_booked": 0, "stly_blocked": 0, "stly_cov": 0}
     )
     for row in rows:
         month = str(row.get("date", ""))[:7]
@@ -279,6 +281,8 @@ def tier_b(rows: list[dict], gap_pct: float, min_stly_cov: float = 0.20) -> tupl
             bucket["stly_cov"] += 1
             if is_booked(stly):
                 bucket["stly_booked"] += 1
+            elif stly.lower() == "blocked":
+                bucket["stly_blocked"] += 1
         ask = num(row.get("user_price")) or num(row.get("price"))
         if ask:
             bucket["ask"].append(ask)
@@ -291,6 +295,9 @@ def tier_b(rows: list[dict], gap_pct: float, min_stly_cov: float = 0.20) -> tupl
     for month in sorted(months):
         b = months[month]
         bookable = b["n"] - b["blocked"]
+        # Same correction for last year: an owner block then was not a night
+        # you failed to sell either, or the YoY column compares two denominators.
+        stly_bookable = b["n"] - b["stly_blocked"]
         totals["nights"] += b["n"]
         totals["bookable"] += bookable
         totals["booked"] += b["booked"]
@@ -303,7 +310,7 @@ def tier_b(rows: list[dict], gap_pct: float, min_stly_cov: float = 0.20) -> tupl
         writer.writerow([
             month, b["n"], bookable, b["booked"], b["blocked"],
             round(100 * b["booked"] / bookable, 1) if bookable else "",
-            round(100 * b["stly_booked"] / b["n"], 1) if has_history else "",
+            round(100 * b["stly_booked"] / stly_bookable, 1) if has_history and stly_bookable else "",
             f"{b['stly_cov']}/{b['n']}",
             round(st.median(b["ask"])) if b["ask"] else "",
             round(min(b["ask"])) if b["ask"] else "",
@@ -357,12 +364,17 @@ def reason_slice(rows: list[dict], wanted: set[str]) -> str:
 
     `reason` is 87.7% of the whole payload (~2,332 B/date), so it is pulled
     per-decision and rendered as one line per factor rather than raw JSON.
+    Dates that were asked for but are not in the payload (already past, or
+    outside what PriceLabs returned) are named explicitly, so a missing block
+    reads as "not fetched", never as "no factors".
     """
     out = []
+    seen: set[str] = set()
     for row in rows:
         date = str(row.get("date", ""))
         if date not in wanted:
             continue
+        seen.add(date)
         reason = row.get("reason")
         if not isinstance(reason, dict):
             continue
@@ -381,6 +393,10 @@ def reason_slice(rows: list[dict], wanted: set[str]) -> str:
         if bounds:
             lines.append("  thresholds: " + " | ".join(bounds))
         out.append("\n".join(lines))
+    missing = sorted(wanted - seen)
+    if missing:
+        out.append("!! not in the response (past, or outside the fetched window): "
+                   + ", ".join(missing))
     return "\n".join(out) if out else "(no reason data for the requested dates)"
 
 
@@ -411,7 +427,8 @@ def main() -> None:
     if args.all:
         catalog = call("/v1/listings", key)
         entries = catalog.get("listings", catalog) if isinstance(catalog, dict) else catalog
-        targets = [(e["id"], e.get("pms", "smartbnb")) for e in entries if isinstance(e, dict) and e.get("id")]
+        targets = [(str(e["id"]), str(e.get("pms", "smartbnb")))
+                   for e in entries if isinstance(e, dict) and e.get("id")]
     else:
         targets = []
         for chunk in args.listings.split(","):
@@ -436,8 +453,21 @@ def main() -> None:
         date_from = today.isoformat()
         date_to = (today + dt.timedelta(days=args.days)).isoformat()
 
-    tag = f"{'reason' if want_reason else 'plain'}_{args.days}d_{date_from}"
-    key_part = "_".join(lid[:8] for lid, _ in targets)[:60]
+    # The cache key must pin everything that changes the payload: the exact
+    # listing set and the exact window. Plain pulls derive date_to from
+    # --days; reason pulls derive both ends from --reason-dates, so a wider
+    # second request must not be served from a narrower first one. Today's
+    # date is in the key so a reason pull for far-future dates does not serve
+    # week-old prices forever.
+    if want_reason:
+        tag = f"reason_{date_from}_{date_to}_asof{today.isoformat()}"
+    else:
+        tag = f"plain_{args.days}d_{date_from}"
+    ids = ",".join(f"{lid}:{pms}" for lid, pms in targets)
+    if len(targets) == 1:
+        key_part = targets[0][0][:8]
+    else:  # prefix-joining truncates past ~7 listings; hash the whole set instead
+        key_part = f"{len(targets)}x_{hashlib.sha1(ids.encode()).hexdigest()[:10]}"
     cache_file = cache / f"{key_part}_{tag}.json"
 
     if cache_file.is_file() and not args.refresh:

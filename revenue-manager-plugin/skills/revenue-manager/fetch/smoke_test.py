@@ -41,6 +41,10 @@ check("STLY blank when zero coverage", sep["stly_occ_pct"] == "",
       f"got {sep['stly_occ_pct']!r}, want '' (0% would read as a YoY collapse)")
 check("STLY coverage is shown", sep["stly_cov"] == "0/2", f"got {sep['stly_cov']}")
 
+may = months["2027-05"]
+check("STLY blocked night excluded from STLY denominator", may["stly_occ_pct"] == "100.0",
+      f"got {may['stly_occ_pct']!r}, want 100.0 (1 booked / (2 - 1 blocked))")
+
 ex = list(csv.DictReader(io.StringIO(exc)))
 check("gap >= threshold surfaces as an exception", len(ex) == 1, f"got {len(ex)} rows")
 if ex:
@@ -63,12 +67,83 @@ check("num('407') parses", rp.num("407") == 407.0)
 txt = rp.reason_slice(rows, {"2027-04-01"})
 check("reason renders a factor line", "Seasonality -13% -> 608" in txt, txt[:120])
 check("reason omits bulky listing_info", "avg_los" not in txt)
+txt2 = rp.reason_slice(rows, {"2027-04-01", "2026-01-01"})
+check("reason names a requested date that was not fetched", "2026-01-01" in txt2 and "not in the response" in txt2,
+      txt2[-160:])
 
 # --- CLI ----------------------------------------------------------------
 p = subprocess.run([sys.executable, str(HERE / "reduce_prices.py")],
                    capture_output=True, text=True)
 check("CLI exits non-zero with no args", p.returncode != 0)
 
+# (summary moved to the end of the file)
+
+# --- AirROI reducer + fact-class harness ----------------------------------
+print("\nreduce_comps + factcheck smoke test\n")
+import os, tempfile  # noqa: E402
+import factcheck as fc  # noqa: E402
+import reduce_comps as rc  # noqa: E402
+
+fx = json.load(open(HERE / "test_fixture_airroi.json"))
+fx_mixed = json.load(open(HERE / "test_fixture_airroi_mixed.json"))
+
+def run_reducer(fixture, *extra):
+    """Run reduce_comps against a fixture by pointing its cache at a temp dir."""
+    with tempfile.TemporaryDirectory() as td:
+        env = dict(os.environ, AIRROI_API_KEY="offline-test-key-never-used")
+        params = {"bedrooms": 4, "baths": 2.0, "guests": 8, "radius": 0, "latitude": 50.88, "longitude": -119.9}
+        rc.CACHE_DIR = td
+        blob = {"pulled_at": "2026-01-01T00:00:00+00:00", "request": params, "listings": fixture["listings"]}
+        json.dump(blob, open(rc.cache_path(params), "w"))
+        p = subprocess.run([sys.executable, str(HERE / "reduce_comps.py"), "--bedrooms", "4", "--baths", "2",
+                            "--guests", "8", "--lat", "50.88", "--lng", "-119.9", "--ttl-days", "36500", *extra],
+                           capture_output=True, text=True, env=dict(env, RC_CACHE_DIR=td))
+        return p
+
+# reduce_comps reads CACHE_DIR at import; make the subprocess honour the temp dir
+rc_src = open(HERE / "reduce_comps.py").read()
+check("reducer honours RC_CACHE_DIR override for tests",
+      'os.environ.get("RC_CACHE_DIR")' in rc_src, "add env override to CACHE_DIR")
+
+p = run_reducer(fx, "--currency", "CAD")
+check("reducer exits 0 on a clean CAD set", p.returncode == 0, p.stderr[:200])
+out = p.stdout
+check("output has header + medians + CSV", out.count("\n") >= 8 and out.startswith("# source=airroi"), out[:120])
+check("description/photos are NOT in the default output", "x" * 50 not in out and "photo" not in out)
+
+full = fc.airroi_facts_full(fx)
+red = fc.airroi_facts_reduced(out)
+bad = fc.compare(full, red, fc.AIRROI_FACTS)
+check("all 13 fact classes preserved (no subject)", not bad, "; ".join(bad))
+check("median ADR from reduced CSV equals median at decision precision", red["adr_median"] == full["adr_median"], f"{red['adr_median']} vs {full['adr_median']}")
+
+p2 = run_reducer(fx, "--currency", "CAD", "--subject-id", "9999", "--subject-name", "subject")
+check("subject exclusion exits 0", p2.returncode == 0, p2.stderr[:200])
+full2 = fc.airroi_facts_full(fx, subject_id="9999")
+red2 = fc.airroi_facts_reduced(p2.stdout)
+bad2 = fc.compare(full2, red2, fc.AIRROI_FACTS)
+check("all 13 fact classes preserved (subject excluded)", not bad2, "; ".join(bad2))
+check("subject reported in set at rank 6 of 6", red2["subject_in_set"] and red2["subject_rank_revenue"] == 6,
+      f"{red2['subject_in_set']} {red2['subject_rank_revenue']}")
+check("subject removed from CSV rows", "9999" not in p2.stdout.split("\n", 2)[2])
+check("comp_count drops by exactly one", red2["comp_count"] == 5, str(red2["comp_count"]))
+check("subject-name guard fires on a matching comp name", "WARNING subject_name" in p2.stdout or "SUBJECT" not in p2.stdout.split("\n",2)[2])
+
+p3 = run_reducer(fx, "--currency", "USD")
+check("currency guard: CAD set + expected USD -> exit 2", p3.returncode == 2, f"rc={p3.returncode}")
+check("currency guard prints nothing to stdout on refusal", p3.stdout.strip() == "", p3.stdout[:80])
+
+p4 = run_reducer(fx_mixed, "--currency", "CAD")
+check("mixed-currency set -> exit 2 even when expected matches most", p4.returncode == 2, f"rc={p4.returncode}")
+
+p5 = run_reducer(fx, "--currency", "CAD", "--full")
+check("--full includes description column", "description" in p5.stdout.split("\n", 2)[2].split("\n")[0])
+
+p6 = subprocess.run([sys.executable, str(HERE / "reduce_comps.py"), "--bedrooms", "4", "--baths", "2", "--guests", "8"],
+                    capture_output=True, text=True)
+check("no location -> argparse error, exit 2", p6.returncode == 2)
+
+# --- summary ----------------------------------------------------------------
 print()
 if fails:
     print(f"{len(fails)} FAILED: " + ", ".join(fails))

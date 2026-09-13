@@ -36,7 +36,9 @@ Nothing is printed that could leak a key.
 EXIT CODES
 ----------
 0  the check ran (findings, if any, are in the report)
-2  the check could NOT run (missing keys, unreachable API) -- never treat as "clean"
+2  the check could NOT run, in whole or in part (missing keys, unreachable API,
+   a listing whose PMS calendar could not be read) -- never treat as "clean".
+   The report and --json are still written for the listings that did reconcile.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ import urllib.error
 import urllib.request
 from collections import defaultdict
 from datetime import date, timedelta
+from pathlib import Path
 
 PL_BASE = "https://api.pricelabs.co"
 HO_BASE = "https://public.api.hospitable.com/v2"
@@ -60,16 +63,30 @@ HO_BASE = "https://public.api.hospitable.com/v2"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 # Candidate .env locations, checked in order. Add your own if your layout differs.
-PL_ENV_CANDIDATES = [
-    "./mcp-servers/pricelabs/.env",
-    "../mcp-servers/pricelabs/.env",
-    "~/.claude/mcp-servers/pricelabs/.env",
-]
-HO_ENV_CANDIDATES = [
-    "./mcp-servers/hospitable/.env",
-    "../mcp-servers/hospitable/.env",
-    "~/.claude/mcp-servers/hospitable/.env",
-]
+# The script lives at <repo>/revenue-manager-plugin/skills/revenue-manager/fetch/,
+# four levels below the mcp-servers/ folder, and SKILL.md runs it from fetch/, so
+# cwd-relative paths alone never find the connector .env files. Resolve against
+# the script's own location first (same rule as reduce_prices.py), then cwd.
+def _repo_root() -> str | None:
+    parents = Path(__file__).resolve().parents
+    return str(parents[4]) if len(parents) > 4 else None
+
+
+def _env_candidates(connector: str) -> list[str]:
+    out = []
+    root = _repo_root()
+    if root:
+        out.append(os.path.join(root, "mcp-servers", connector, ".env"))
+    out += [
+        f"./mcp-servers/{connector}/.env",
+        f"../mcp-servers/{connector}/.env",
+        f"~/.claude/mcp-servers/{connector}/.env",
+    ]
+    return out
+
+
+PL_ENV_CANDIDATES = _env_candidates("pricelabs")
+HO_ENV_CANDIDATES = _env_candidates("hospitable")
 
 PL_KEYS = ("PRICELABS_API_KEY", "PRICELABS_KEY")
 HO_KEYS = ("HOSPITABLE_API_KEY", "HOSPITABLE_TOKEN", "HOSPITABLE_PAT")
@@ -214,7 +231,7 @@ def reconcile(pms_days: list[dict], pl_rows: dict) -> dict:
 
 def night_value(day: dict) -> float:
     """Hospitable prices are in CENTS on read. Divide by 100 or you are out by 100x."""
-    return (day.get("price") or {}).get("amount", 0) / 100.0
+    return ((day.get("price") or {}).get("amount") or 0) / 100.0
 
 
 def main() -> int:
@@ -253,10 +270,21 @@ def main() -> int:
     exclusions: dict[str, list[str]] = defaultdict(list)
     total_missed = total_value = 0
     unsynced: list[str] = []
+    # Listings whose PMS calendar could not be read. They are NOT verified, so
+    # they go in the report and the JSON, and the run exits 2. A listing that
+    # silently falls out of the exclusion set reads as "clean" downstream.
+    pms_failed: list[str] = []
 
     for listing in wanted:
         lid, name = listing["id"], (listing.get("name") or listing["id"])[:26]
-        pl_rows = pl.get(lid, {})
+        if lid not in pl:
+            # PriceLabs dropped it from the response with no error entry. The
+            # fetch_pricelabs docstring warns it does this silently; an empty
+            # row map would otherwise reconcile to "0 defects".
+            unsynced.append(f"{name}: no rows returned by PriceLabs for {d_from}..{d_to}")
+            print(f"{name:26s} {'-':>8s} {'-':>7s} {'-':>10s} {'-':>11s}  NO PRICELABS DATA")
+            continue
+        pl_rows = pl[lid]
         if "__error__" in pl_rows:
             unsynced.append(f"{name}: {pl_rows['__error__']}")
             print(f"{name:26s} {'-':>8s} {'-':>7s} {'-':>10s} {'-':>11s}  NOT SYNCED")
@@ -264,7 +292,8 @@ def main() -> int:
         try:
             days = fetch_pms_calendar(ho_key, lid, d_from, d_to)
         except CheckCannotRun as e:
-            print(f"{name:26s} PMS read failed: {e}")
+            pms_failed.append(f"{name}: {e}")
+            print(f"{name:26s} {'-':>8s} {'-':>7s} {'-':>10s} {'-':>11s}  PMS READ FAILED")
             continue
 
         r = reconcile(days, pl_rows)
@@ -289,6 +318,11 @@ def main() -> int:
         for u in unsynced:
             print(f"  - {u}")
 
+    if pms_failed:
+        print("\nPMS CALENDAR COULD NOT BE READ (these listings are UNVERIFIED):")
+        for u in pms_failed:
+            print(f"  - {u}")
+
     if total_missed:
         print(f"\n*** {total_missed} booked nights worth {total_value:,.0f} are invisible "
               f"to PriceLabs. ***")
@@ -296,6 +330,7 @@ def main() -> int:
         print("set and reported as a sync defect, not treated as underperformance.")
 
     if args.json:
+        os.makedirs(os.path.dirname(os.path.abspath(args.json)), exist_ok=True)
         with open(args.json, "w") as fh:
             json.dump({
                 "generated": date.today().isoformat(),
@@ -303,9 +338,15 @@ def main() -> int:
                 "rule": "PMS RESERVED + PriceLabs available = sync defect, exclude from pricing",
                 "exclude_dates_by_listing": {k: v for k, v in exclusions.items() if v},
                 "unsynced_listings": unsynced,
+                "pms_read_failed": pms_failed,
             }, fh, indent=2)
         print(f"\nExclusion set written to {args.json}")
 
+    if pms_failed:
+        raise CheckCannotRun(
+            f"{len(pms_failed)} listing(s) could not be reconciled (PMS read failed). "
+            "The report above covers the rest; re-run with --listing for the failures."
+        )
     return 0
 
 

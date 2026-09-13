@@ -97,7 +97,7 @@ These are **never hard dependencies and never sit in a critical path.** If they'
 | AirROI | `mcp__airroi__*` (`get_estimate`, `get_comparables`, `get_listing`, `get_listing_metrics`, `health_check`) | **Named-competitor** qualitative comp layer on top of PriceLabs' aggregate neighborhood data. Returns **native local currency** (`currency=native`) — normally matches your market; currency-match check below. |
 
 **AirROI hard caveats (read every time you consider using it):**
-- AirROI returns **native local currency** — always call it with **`currency=native`** (the connector default), so figures come back in each market's own currency (e.g. CAD for Canadian markets, GBP for the UK), normally matching your PMS/PriceLabs. Do NOT pass raw ISO codes like `cad`/`eur` — the API 400s on those; `native` is the correct value. **Still verify:** read the `currency` field AirROI echoes and confirm it matches the operator's currency. On a genuine mismatch (e.g. a cross-border comp in another currency), convert first (named live FX source + timestamp, see 2.4) or flag-and-exclude — never silently mix currencies. (Enforced by the Currency gate in Step 2.)
+- AirROI returns **native local currency** — always call it with **`currency=native`** passed EXPLICITLY (do NOT rely on a connector default: older builds of the AirROI MCP default to `usd`, and a call that omits `currency` silently returns USD comps for a CAD listing), so figures come back in each market's own currency (e.g. CAD for Canadian markets, GBP for the UK), normally matching your PMS/PriceLabs. Do NOT pass raw ISO codes like `cad`/`eur` — the API 400s on those; `native` is the correct value. **Still verify:** read the `currency` field AirROI echoes and confirm it matches the operator's currency. On a genuine mismatch (e.g. a cross-border comp in another currency), convert first (named live FX source + timestamp, see 2.4) or flag-and-exclude — never silently mix currencies. (Enforced by the Currency gate in Step 2.)
 - AirROI is now a **proper MCP** (`mcp__airroi__*`) — detect-and-use exactly like the other enrichment tools. If `mcp__airroi__*` isn't connected, **skip it silently** (PriceLabs neighborhood data is the required comp engine; AirROI only enriches). Never hard-code a personal absolute path.
 - AirROI is the **qualitative** comp layer (named competitors a guest would actually compare). **PriceLabs neighborhood data remains the quantitative comp engine.** If AirROI ever contradicts PriceLabs, NEVER override PriceLabs silently — surface the disagreement and explain it.
 
@@ -134,7 +134,7 @@ This skill runs **FULLY AUTONOMOUSLY for reads and analysis.** Pre-authorized (n
 - Run parallel agents
 - Execute SQL against the user's own Supabase (reads + the idempotent pre-flight in Step 3)
 - Parse large JSON with python3
-- Call the optional AirROI MCP (`mcp__airroi__*`, read-only) if present
+- Named comps, if AirROI is present: **do not call `mcp__airroi__get_comparables` directly** (one response is ~103,000 tokens, most of it descriptions and photo URLs). Run `fetch/reduce_comps.py` instead (Step 4.8). It caches the raw payload, prints a ~1,700-token CSV of the 13 fields a decision reads, refuses to print on any currency mismatch, and removes your own listing from the comp set.
 - Deliver the full report end-to-end
 
 **The ONE hard exception: any price/calendar write.** Pushing a change to the pricing tool or PMS, and writing the audit trail, only happens **after the human approval gate** (Step 2, item 6). Analysis = autonomous. Mutations = approved. There is no silent auto-push in v1.
@@ -365,6 +365,39 @@ data['data']['Future Percentile Prices']['Category']    # 25/50/75/90 percentile
 ```
 Pull the comp count here and feed it to the thin-comp transparency guard (2.3). Always report N.
 
+## Step 4.8 — Named comps via the reducer, never the raw MCP (AirROI, optional)
+
+One `get_comparables` response is **~103,000 tokens**: 25 listings at ~7.8 KB each, and ~40%
+of every listing is its description and photo URLs, which a pricing decision never reads.
+The 13 fields it does read fit in a 75-byte CSV row.
+
+```bash
+python3 fetch/reduce_comps.py --bedrooms 4 --baths 2 --guests 8 \
+    --lat <lat> --lng <lng> --currency <PMS currency> --subject-id <your Airbnb listing id>
+```
+
+Take `--lat/--lng` and bedrooms/baths/guests from the PMS property record, `--currency`
+from the PMS, and `--subject-id` from the PMS's channel listing id (Hospitable exposes it
+as `listing_id` on the calendar response).
+
+**What it guarantees, and why each matters:**
+
+| Guarantee | Failure it prevents |
+|---|---|
+| `currency=native` always sent explicitly; **every** comp must echo the expected currency or it exits 2 and prints nothing | An MCP build whose default is `usd` feeding USD comps to a CAD decision. Verified live: the Jun 2026 build does exactly that. |
+| Your own listing is removed from every statistic; its rank in the raw set is reported | Measured on a 4BR chalet: the subject sat at rank 24 of 25 in its own comp set, pulling comp ADR up 2.4% and comp revenue down 6%. |
+| Raw payload cached 7 days, keyed by (location to ~100 m, bedrooms, guests) | Eight properties in three markets is ~5 API calls, not 8; a re-run inside the week is 0. |
+| `fetch/factcheck.py airroi` proves the 13 decision facts survive the cut; it runs in the smoke test | Trimming a payload and silently losing the fact that inverts a verdict (this happened in Aug 2026). |
+
+**Reading the output.** Two `#` lines then a CSV. The first line carries `pulled=` (say the
+age in the report if over 24h), `cache=hit|miss`, `comps=N`, `currency=`, and
+`subject_rank_revenue=` (where you rank; this is a real signal, report it). The second line
+is the medians. Exit **2 means "no named comps this run"**, never "zero comps"; PriceLabs
+neighborhood data stays the quantitative comp engine either way.
+
+`--full` adds description and amenities columns. The Listing Optimizer needs those; the
+Revenue Manager does not.
+
 ## Step 4.9 — RECONCILE THE PMS AGAINST PRICELABS (blocking gate, runs before any recommendation)
 
 **PriceLabs does not see every booking.** Off-platform reservations, and bookings taken
@@ -393,13 +426,16 @@ It is never an underperforming date. It never enters the discount candidate set.
 ### How to run it
 
 ```bash
-python3 fetch/reconcile_pms.py --days 180 --json .pl_cache/exclusions.json
+cd <plugin>/skills/revenue-manager/fetch        # same directory as Step 4.0
+python3 reconcile_pms.py --days 180 --json .pl_cache/exclusions.json
 ```
 
-- Exit **0** = the check ran. Read the report.
-- Exit **2** = the check **could not run** (missing key, API unreachable, PMS ignored the
-  date filter). **Do not proceed to Step 6 on an unverified calendar.** A gate that goes
-  green because it was blind is worse than no gate.
+- Exit **0** = the check ran for every listing. Read the report.
+- Exit **2** = the check **could not run, in whole or in part** (missing key, API
+  unreachable, PMS ignored the date filter, or a listing's PMS calendar could not be
+  read; those listings are named under `pms_read_failed`). **Do not proceed to Step 6 on
+  an unverified calendar.** A gate that goes green because it was blind is worse than no
+  gate. Any other exit code is a crash: read the traceback, do not proceed.
 
 ### What to do with the output
 
@@ -804,6 +840,7 @@ Tools: `pricelabs_list_listings`, `pricelabs_get_listing`, `pricelabs_get_listin
 - Append as an "Operational signals" section at the end of the report.
 
 ### AirROI (named-competitor comps — native local currency) — `mcp__airroi__*`
+- **Pull through `fetch/reduce_comps.py` (Step 4.8), not the MCP tool directly.** The MCP path costs ~103k tokens per call and cannot assert currency or exclude the subject. The MCP is still what Step 0 detects; the reducer hits the same API.
 - MCP tools: `get_comparables` (≤25 named comps w/ TTM revenue/ADR/occ/ratings), `get_estimate` (revenue projection + percentiles + comps), `get_listing` (full listing detail), `get_listing_metrics` (monthly occ/ADR/rev/RevPAR), `health_check`. If `mcp__airroi__*` isn't connected, **skip silently** — it only enriches PriceLabs, never required. (Setup: it's a bundled MCP at `mcp-servers/airroi/` — build the venv, add a free AirROI key, register, restart Claude Code.)
 - Use for the **qualitative** named-competitor comp layer ON TOP of PriceLabs' aggregate neighborhood data.
 - **Native currency:** call with `currency=native` so figures return in each market's local currency (normally matching your PMS/PriceLabs). Verify the echoed `currency` field; on a genuine mismatch convert (named live FX + timestamp, gate 2.4) or flag-and-exclude — never silently mix. Never contradict PriceLabs silently — if they disagree, surface and explain.
