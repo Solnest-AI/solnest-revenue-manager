@@ -453,6 +453,14 @@ python3 reconcile_pms.py --days 180 --json .pl_cache/exclusions.json
 
 ### What to do with the output
 
+The report is a portfolio table, then one `## calendar` block per listing (header line with
+counts, PMS min-stay mode, markup median and spread, drift count; then `### invisible` and
+`### drift` CSVs). **That block is the only calendar data the run needs.** Never call
+`hospitable_get_property_calendar` or the PMS calendar tool directly afterwards; the raw
+calendar is ~49,000 tokens per listing and everything Step 5 reads is already in the block.
+The gate caches the raw bundle under `~/.cache/revenue-manager/reconcile/` and
+`fetch/factcheck.py calendar` proves the block carries all 13 facts; it runs in the smoke test.
+
 1. **Exclude** every date in `exclude_dates_by_listing` from occupancy math, pace math,
    and every discount recommendation. Those nights are sold.
 2. **Report the defect to the operator by name**, with the listing, the date range, and
@@ -487,7 +495,18 @@ The PMS calendar price, the PriceLabs recommended price, and realized ADR are th
 - **Ask** = the calendar/forward-curve listed price.
 - **Cleared / realized = ADR** (PriceLabs listing-prices ADR field + reservations, and the PMS's realized ADR). Cleared runs **materially higher** than ask. Report both; never conflate them.
 
-### Markup — measure it, never assume
+### Markup — measure it, never assume (the gate already did; read its `## calendar` block)
+
+**Do not load the raw PMS calendar for this.** A 365-day Hospitable calendar is ~49,000
+tokens per listing and Step 4.9 already pulled it. Every number below comes from the gate's
+per-listing `## calendar` header line: `paired=` (available nights priced in both systems),
+`markup_median=` (PMS price ÷ PriceLabs price, 1.0 = no markup), `markup_stdev=`, and
+`min_stay_mismatch=`. The `### drift` rows under it are the exact dates where the two
+systems disagree by more than 5% on price, or on min-stay, with the ratio and the reason.
+A `# WARNING markup spread > 5%` line is the "sync is broken" flag; a `# NOTE ... long-term
+rental` line means nightly pricing logic does not apply to that listing.
+
+Original rule, unchanged:
 The PMS calendar price and the PriceLabs price will sometimes differ. Compute the ratio **EMPIRICALLY per property** — do not assume a number:
 - For each property, compute `median(pms_calendar_price ÷ pricelabs_recommended_price)` across the next 90 days of paired prices.
 - **For some properties this is 1.0 (no markup at all)** — cleaning and channel fees are added at the channel, not baked into the nightly calendar price. Don't invent a markup that isn't there.
