@@ -50,6 +50,7 @@ UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 ENV_CANDIDATES = ["./mcp-servers/pricelabs/.env", "../mcp-servers/pricelabs/.env",
                   "../../../../mcp-servers/pricelabs/.env", "~/.claude/mcp-servers/pricelabs/.env"]
 CACHE_DIR = cache_dir("reservations")
+PAGE_SIZE = 100
 MAX_PAGES = 20
 PII_FIELDS = ("guestName", "guest_name", "email", "phone")
 
@@ -77,12 +78,19 @@ def strip_pii(row: dict) -> dict:
 
 
 def fetch(listing: str, pms: str, d_from: str, d_to: str, key: str) -> list[dict]:
-    """Follows next_page until it is falsy. Returns rows with PII already removed."""
-    rows, page, seen = [], None, 0
-    while seen < MAX_PAGES:
-        q = {"listing_id": listing, "pms": pms, "start_date": d_from, "end_date": d_to}
-        if page:
-            q["page"] = page
+    """Pages with `offset`/`limit`. Returns rows with PII already removed.
+
+    TRAP (found 2026-09-12 by a row-count check, not by the fact harness): the endpoint
+    paginates on `offset`, and `next_page` is a bare boolean. A `page=N` parameter is
+    silently ignored, so the old loop fetched page 1 twenty times and every monthly total
+    for a busy listing came out up to 20x too high. Both the raw cache and the reduced table
+    carried the same duplicates, so raw-vs-reduced agreement proved nothing. Rows are
+    de-duplicated on reservation_id and the loop stops the moment a page adds nothing new.
+    """
+    rows, seen_ids, offset, pages = [], set(), 0, 0
+    while pages < MAX_PAGES:
+        q = {"listing_id": listing, "pms": pms, "start_date": d_from, "end_date": d_to,
+             "limit": PAGE_SIZE, "offset": offset}
         url = f"{BASE}/v1/reservation_data?{urllib.parse.urlencode(q)}"
         req = urllib.request.Request(url, headers={"X-API-Key": key, "User-Agent": UA, "Accept": "application/json"})
         try:
@@ -92,12 +100,17 @@ def fetch(listing: str, pms: str, d_from: str, d_to: str, key: str) -> list[dict
             raise CannotProduce(f"PriceLabs HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}")
         except Exception as e:  # noqa: BLE001
             raise CannotProduce(f"PriceLabs request failed: {e}")
-        rows.extend(strip_pii(r) for r in (data.get("data") or []))
-        seen += 1
-        nxt = data.get("next_page")
-        if not nxt:
+        page_rows = data.get("data") or []
+        new = [r for r in page_rows if r.get("reservation_id") not in seen_ids]
+        for r in new:
+            seen_ids.add(r.get("reservation_id"))
+        rows.extend(strip_pii(r) for r in new)
+        pages += 1
+        offset += len(page_rows)
+        if not data.get("next_page") or not page_rows or not new:
             break
-        page = nxt if not isinstance(nxt, bool) else (page or 1) + 1
+    else:
+        raise CannotProduce(f"more than {MAX_PAGES * PAGE_SIZE} reservations in the window; refusing to truncate silently")
     return rows
 
 

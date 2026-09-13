@@ -60,6 +60,7 @@ from _cache import cache_dir  # noqa: E402
 from factcheck import (  # noqa: E402
     NB_DAILY_COLUMNS, NB_KPI_COLUMNS, NB_KPI_SERIES, NB_MONTHLY_COLUMNS, NB_PCT_SERIES,
     _nb_kind, _r, neighborhood_daily_from_raw,
+    label_index, neighborhood_missing_series, neighborhood_base_percentiles,
 )
 
 BASE = "https://api.pricelabs.co"
@@ -135,31 +136,46 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--listing", required=True, help="PriceLabs listing id")
     ap.add_argument("--bedrooms", required=True, help="the listing's bedroom count; selects the category")
+    ap.add_argument("--category", help="use this category name instead of the bedroom count "
+                                       "(custom PriceLabs comp sets, e.g. 'My Comp Set')")
     ap.add_argument("--pms", default="smartbnb")
     ap.add_argument("--lat", type=float); ap.add_argument("--lng", type=float)
     ap.add_argument("--days", type=int, default=365, help="forward window (default 365)")
     ap.add_argument("--currency", help="expected ISO code; the payload must report it")
     ap.add_argument("--ttl-days", type=float, default=1, help="cache lifetime (default 1: percentiles move daily)")
     ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--today", default=None, help=argparse.SUPPRESS)  # window start; tests pin it
     a = ap.parse_args()
+    today = a.today or __import__("datetime").date.today().isoformat()
 
     blob, how, ckey = load_or_fetch(a.listing, a.pms, a.lat, a.lng, a.ttl_days, not a.no_cache)
     d = blob["data"]
     cats = sorted(d.get("Future Percentile Prices", {}).get("Category", {}).keys(), key=lambda x: (len(x), x))
-    cat = str(a.bedrooms)
+    cat = a.category or str(a.bedrooms)
+    cat_note = ""
     if cat not in cats:
-        raise CannotProduce(f"bedroom category {cat} is not in this market's data (available: {cats}). "
-                            "Refusing to substitute a neighbouring category.")
+        # A listing priced against a custom PriceLabs comp set has ONE named category and
+        # no bedroom categories at all. Use it and say so; never substitute a neighbouring
+        # bedroom category when several exist.
+        if a.category is None and len(cats) == 1:
+            cat, cat_note = cats[0], f"custom_comp_set(bedroom_category_{a.bedrooms}_absent)"
+        else:
+            raise CannotProduce(f"category {cat!r} is not in this market's data (available: {cats}). "
+                                "Refusing to substitute a neighbouring category; pass --category to pick one.")
     cur = d.get("currency")
     if a.currency and str(cur).upper() != a.currency.upper():
         raise CannotProduce(f"currency mismatch: expected {a.currency}, neighborhood reports {cur}")
 
-    daily = neighborhood_daily_from_raw({"data": d}, cat, a.days)
+    try:
+        daily = neighborhood_daily_from_raw({"data": d}, cat, a.days, start=today)
+    except (ValueError, KeyError, IndexError, TypeError) as e:
+        raise CannotProduce(f"payload shape not understood for category {cat!r}: {e}")
+    missing = neighborhood_missing_series({"data": d}, cat)
     if not daily:
         raise CannotProduce("no forward dates in the percentile series")
     pct_cat = d["Future Percentile Prices"]["Category"][cat]
-    base = d["Summary Table Base Price"]["Category"][cat]["Y_values"]
-    mp = d["Future Percentile Prices Monthly"]["Category"][cat]
+    basep = neighborhood_base_percentiles(d, cat)
+    mp = d.get("Future Percentile Prices Monthly", {}).get("Category", {}).get(cat)  # absent on custom comp sets
     mlabels = d["Future Percentile Prices"]["Labels"]
     kp = d["Market KPI"]["Category"][cat]
     klabels = d["Market KPI"]["Labels"]
@@ -172,11 +188,14 @@ def main() -> int:
         return int(sum(float(r[col]) for r in n30 if r.get(col) is not None))
 
     print(f"# source=pricelabs_neighborhood pulled={blob['pulled_at']} cache={how} cache_key={ckey} "
-          f"listing={a.listing[:8]} category={cat} listings_used={pct_cat.get('Listings Used')} "
-          f"active={pct_cat.get('Active Used')} currency={cur} days={len(daily)} "
-          f"daily_first={daily[0]['date']} daily_last={daily[-1]['date']} categories_available={','.join(cats)}")
-    print(f"# base_p25={_r(base[0], 'nb_price')} base_p50={_r(base[1], 'nb_price')} "
-          f"base_p75={_r(base[2], 'nb_price')} base_p90={_r(base[3], 'nb_price')}")
+          f"listing={a.listing[:8]} category={cat.replace(' ', '_')} listings_used={pct_cat.get('Listings Used')} "
+          f"active={pct_cat.get('Active Used')} currency={cur} days={len(daily)} window_start={today} "
+          f"daily_first={daily[0]['date']} daily_last={daily[-1]['date']} "
+          f"categories_available={','.join(c.replace(' ', '_') for c in cats)}"
+          + (f" category_note={cat_note}" if cat_note else "")
+          + (f" missing_series={','.join(m.replace(' ', '_') for m in missing)}" if missing else ""))
+    print(f"# base_p25={_r(basep['base_p25'], 'nb_price')} base_p50={_r(basep['base_p50'], 'nb_price')} "
+          f"base_p75={_r(basep['base_p75'], 'nb_price')} base_p90={_r(basep['base_p90'], 'nb_price')}")
     print(f"# next30 p50={mean('p50', 'nb_price')} p90={mean('p90', 'nb_price')} "
           f"booked_med={mean('booked_med', 'nb_price')} occ={mean('occ', 'nb_pct')} "
           f"occ_stly={mean('occ_stly', 'nb_pct')} occ_ly={mean('occ_ly', 'nb_pct')} "
@@ -187,11 +206,16 @@ def main() -> int:
     for r in daily:
         w.writerow([r[c] if r.get(c) is not None else "" for c in NB_DAILY_COLUMNS])
     print("## monthly"); w.writerow(NB_MONTHLY_COLUMNS)
-    for i, m in enumerate(mp["X_values"]):
-        w.writerow([m] + [_r(mp["Y_values"][mlabels.index(lab)][i], _nb_kind(col)) for lab, col in NB_PCT_SERIES.items()])
+    if mp:
+        for i, m in enumerate(mp["X_values"]):
+            w.writerow([m] + [(_r(mp["Y_values"][label_index(mlabels, lab)][i], _nb_kind(col))
+                               if label_index(mlabels, lab) is not None else "") for lab, col in NB_PCT_SERIES.items()])
+    else:
+        print("# monthly percentiles are not provided for this category; use the daily block")
     print("## kpi"); w.writerow(NB_KPI_COLUMNS)
     for i, m in enumerate(kp["X_values"]):
-        w.writerow([m] + [_r(kp["Y_values"][klabels.index(lab)][i], "count") for lab in NB_KPI_SERIES])
+        w.writerow([m] + [(_r(kp["Y_values"][label_index(klabels, lab)][i], "count")
+                           if label_index(klabels, lab) is not None else "") for lab in NB_KPI_SERIES])
     return 0
 
 
@@ -200,5 +224,9 @@ if __name__ == "__main__":
         sys.exit(main())
     except CannotProduce as e:
         print(f"NEIGHBORHOOD UNAVAILABLE: {e}", file=sys.stderr)
+        print("Do not price against comps this run; report the market as unverified.", file=sys.stderr)
+        sys.exit(2)
+    except Exception as e:  # noqa: BLE001 - schema drift must read as "cannot produce", not a crash
+        print(f"NEIGHBORHOOD UNAVAILABLE: unexpected {type(e).__name__}: {e}", file=sys.stderr)
         print("Do not price against comps this run; report the market as unverified.", file=sys.stderr)
         sys.exit(2)

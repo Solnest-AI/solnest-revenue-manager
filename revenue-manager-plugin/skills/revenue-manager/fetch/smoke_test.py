@@ -170,7 +170,7 @@ def run_nb(*extra, seed=True):
                 json.dump({"pulled_at": "2026-01-01T00:00:00+00:00", "listing": "fixture-listing", "pms": "smartbnb",
                            "data": nfx["data"]}, open(os.path.join(td, "neighborhood", name), "w"))
         return subprocess.run([sys.executable, str(HERE / "reduce_neighborhood.py"), "--listing", "fixture-listing",
-                               "--ttl-days", "36500", *extra], capture_output=True, text=True, env=env)
+                               "--ttl-days", "36500", "--today", "2026-06-01", *extra], capture_output=True, text=True, env=env)
 
 p = run_nb("--bedrooms", "4", "--lat", "50.88", "--lng", "-119.9", "--currency", "CAD")
 check("neighborhood reducer exits 0", p.returncode == 0, p.stderr[:200])
@@ -317,6 +317,47 @@ with tempfile.TemporaryDirectory() as td:
     pr2 = subprocess.run([sys.executable, str(HERE / "reduce_reservations.py"), "--listing", "fixture-listing",
                           "--today", TODAY, "--currency", "USD", "--ttl-days", "36500"], capture_output=True, text=True, env=env)
 check("currency mismatch -> exit 2, nothing printed", pr2.returncode == 2 and pr2.stdout.strip() == "")
+
+# --- pagination: the endpoint pages on `offset`; a repeated page must not be summed twice ---
+import io as _io
+import urllib.request as _ur
+
+
+class _FakeResp(_io.BytesIO):
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+def _serve(pages_by_offset):
+    calls = []
+    def fake_urlopen(req, timeout=0):
+        from urllib.parse import parse_qs, urlparse
+        q = parse_qs(urlparse(req.full_url).query)
+        off = int(q.get("offset", ["0"])[0]); calls.append(off)
+        body = pages_by_offset(off)
+        return _FakeResp(json.dumps(body).encode())
+    return fake_urlopen, calls
+
+
+_orig = _ur.urlopen
+try:
+    # 1) API that ignores offset (the bug's shape): same 3 rows forever, next_page always true
+    same = {"pms_name": "smartbnb", "next_page": True,
+            "data": [{"reservation_id": f"R{i}", "guestName": "x", "check_in": "2027-01-01"} for i in range(3)]}
+    _ur.urlopen, calls = _serve(lambda off: same)
+    got = rr.fetch("fixture-listing", "smartbnb", "2026-01-01", "2027-12-31", "k")
+    check("repeated page is not double counted (3 rows, 2 calls, stop)", len(got) == 3 and len(calls) == 2, f"rows={len(got)} calls={calls}")
+    check("guest names stripped by the pager", all("guestName" not in r for r in got))
+    # 2) honest offset pagination: 2 full pages + a short last page, next_page false at the end
+    def paged(off):
+        n = {0: 100, 100: 100, 200: 7}.get(off, 0)
+        return {"pms_name": "smartbnb", "next_page": off + n < 207,
+                "data": [{"reservation_id": f"R{off + i}", "check_in": "2027-01-01"} for i in range(n)]}
+    _ur.urlopen, calls = _serve(paged)
+    got = rr.fetch("fixture-listing", "smartbnb", "2026-01-01", "2027-12-31", "k")
+    check("offset pagination collects every distinct row once (207)", len(got) == 207 and calls == [0, 100, 200], f"rows={len(got)} calls={calls}")
+finally:
+    _ur.urlopen = _orig
 
 # --- summary ----------------------------------------------------------------
 print()

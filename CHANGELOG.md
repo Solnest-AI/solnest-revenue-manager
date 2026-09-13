@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.2.0-rc6 (unreleased)
+
+- **`reduce_reservations.py` paginated wrong.** PriceLabs pages `reservation_data` on `offset`;
+  `next_page` is a bare boolean and a `page=N` parameter is silently ignored, so the loop fetched
+  page 1 up to twenty times. For any listing with more than 100 reservations in the window every
+  monthly total (nights, revenue, ADR) came out multiplied. The raw cache carried the same
+  duplicates, so raw-vs-reduced agreement proved nothing; a row-count check in the decision eval
+  caught it. Now offset-paginated, de-duplicated on `reservation_id`, stops on an empty or
+  all-seen page, and exits 2 rather than truncating past the page cap. Two regression tests.
+- **`reduce_neighborhood.py` did not understand custom comp sets.** A listing priced against a
+  named PriceLabs comp set returns one category (the set's name), different series labels
+  (`N_bookings`, `Future Bookings`), a nine-column base-price table and a daily series that starts
+  six months in the past. The reducer crashed with a traceback (exit 1, neither "printed" nor
+  "cannot produce"). Now: `--category` override, auto-select when the market has exactly one
+  category (noted in the header), case-insensitive label resolution with `missing_series=` in
+  the header for anything the payload does not carry (never filled from another series), base
+  percentiles read by label, the daily block windowed from today (`window_start=`), an optional
+  monthly block, and any unexpected exception exits 2. The fact harness gets the same logic
+  (`--start`).
+- **`eval/`: decision-level eval.** Full raw payloads vs reducer output, same model, same
+  runbook, same snapshot, mechanical grading with noise attribution. See `eval/README.md`.
+
 ## 1.1.1
 
 - **`setup-keys.sh` / `setup-keys.ps1` no longer clobber each connector's `.env`.** They used to

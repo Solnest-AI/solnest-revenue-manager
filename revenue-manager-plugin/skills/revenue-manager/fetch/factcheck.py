@@ -229,27 +229,86 @@ def _nb_kind(col: str) -> str:
     return "count"
 
 
-def neighborhood_daily_from_raw(raw: dict, category: str, days: int | None = None) -> list[dict]:
+NB_REQUIRED_SERIES = ("50th Percentile", "Occupancy")   # without these the table is not a market
+
+
+def label_index(labels: list, lab: str) -> int | None:
+    """Resolve a series label. Exact first, then case-insensitive (PriceLabs spells
+    N_Bookings/N_bookings differently between bedroom and custom comp-set payloads).
+    None when absent: the column is left blank, never filled from another series."""
+    if lab in labels:
+        return labels.index(lab)
+    low = [str(x).lower() for x in labels]
+    return low.index(lab.lower()) if lab.lower() in low else None
+
+
+def neighborhood_missing_series(raw: dict, category: str) -> list[str]:
+    """Series the reducer wants that this payload does not carry (reported, not substituted)."""
+    d = raw.get("data", raw)
+    out = []
+    for block, series in (("Future Percentile Prices", NB_PCT_SERIES), ("Future Occ/New/Canc", NB_OCC_SERIES),
+                          ("Market KPI", NB_KPI_SERIES)):
+        labels = d.get(block, {}).get("Labels", [])
+        out += [lab for lab in series if label_index(labels, lab) is None]
+    return out
+
+
+NB_BASE_PREFIXES = {"25th Percentile": "base_p25", "50th Percentile": "base_p50",
+                    "75th Percentile": "base_p75", "90th Percentile": "base_p90"}
+
+
+def neighborhood_base_percentiles(d: dict, category: str) -> dict:
+    """Base-price percentiles by LABEL. Bedroom payloads carry four labelled values; custom
+    comp-set payloads carry nine (median booked nightly/weekly/monthly, LOS, lead time, then
+    the percentiles), so position is not a key. Legacy payloads without labels: first four."""
+    st = d["Summary Table Base Price"]
+    y = st["Category"][category]["Y_values"]
+    labels = st.get("Labels")
+    if labels:
+        low = [str(lab).lower() for lab in labels]
+        out = {}
+        for prefix, key in NB_BASE_PREFIXES.items():
+            j = next((i for i, lab in enumerate(low) if lab.startswith(prefix.lower())), None)
+            out[key] = y[j] if (j is not None and j < len(y)) else None
+        return out
+    vals = list(y[:4]) + [None] * 4
+    return dict(zip(NB_BASE_PREFIXES.values(), vals))
+
+
+def neighborhood_daily_from_raw(raw: dict, category: str, days: int | None = None,
+                                start: str | None = None) -> list[dict]:
+    """Forward daily rows for one category. `start` (YYYY-MM-DD) drops dates before it: custom
+    comp-set payloads begin six months in the past, bedroom payloads begin tomorrow."""
     d = raw.get("data", raw)
     pct = d["Future Percentile Prices"]["Category"][category]
     occ = d["Future Occ/New/Canc"]["Category"][category]
     pct_labels = d["Future Percentile Prices"]["Labels"]
     occ_labels = d["Future Occ/New/Canc"]["Labels"]
+    for lab in NB_REQUIRED_SERIES:
+        if label_index(pct_labels, lab) is None and label_index(occ_labels, lab) is None:
+            raise ValueError(f"required series {lab!r} missing from the neighborhood payload")
     # occ series come wrapped one level deeper than percentile series
-    occ_by_label = {lab: occ["Y_values"][i][0] if isinstance(occ["Y_values"][i][0], list) else occ["Y_values"][i]
-                    for i, lab in enumerate(occ_labels)}
+    occ_by_label = {}
+    for lab in NB_OCC_SERIES:
+        j = label_index(occ_labels, lab)
+        if j is not None:
+            y = occ["Y_values"][j]
+            occ_by_label[lab] = y[0] if (y and isinstance(y[0], list)) else y
     occ_dates = {dt: i for i, dt in enumerate(occ["X_values"])}
     rows = []
     for i, dt in enumerate(pct["X_values"]):
-        if days is not None and i >= days:
+        if start and str(dt) < start:
+            continue
+        if days is not None and len(rows) >= days:
             break
         row = {"date": dt}
         for lab, col in NB_PCT_SERIES.items():
-            j = pct_labels.index(lab)
-            row[col] = _r(pct["Y_values"][j][i], _nb_kind(col))
+            j = label_index(pct_labels, lab)
+            row[col] = _r(pct["Y_values"][j][i], _nb_kind(col)) if j is not None else None
         k = occ_dates.get(dt)
         for lab, col in NB_OCC_SERIES.items():
-            row[col] = _r(occ_by_label[lab][k], _nb_kind(col)) if k is not None else None
+            ser = occ_by_label.get(lab)
+            row[col] = _r(ser[k], _nb_kind(col)) if (k is not None and ser is not None and k < len(ser)) else None
         rows.append(row)
     return rows
 
@@ -287,21 +346,22 @@ def _nb_facts_from_tables(meta: dict, daily: list[dict], monthly: list[dict], kp
     }
 
 
-def neighborhood_facts_full(raw: dict, category: str, days: int | None = None) -> dict:
+def neighborhood_facts_full(raw: dict, category: str, days: int | None = None, start: str | None = None) -> dict:
     d = raw.get("data", raw)
-    base = d["Summary Table Base Price"]["Category"][category]["Y_values"]
-    meta = {"category": category, "currency": d.get("currency"),
+    meta = {"category": category.replace(" ", "_"), "currency": d.get("currency"),
             "listings_used": d["Future Percentile Prices"]["Category"][category].get("Listings Used"),
-            "base_p25": base[0], "base_p50": base[1], "base_p75": base[2], "base_p90": base[3]}
-    daily = neighborhood_daily_from_raw(raw, category, days)
-    mp = d["Future Percentile Prices Monthly"]["Category"][category]
+            **neighborhood_base_percentiles(d, category)}
+    daily = neighborhood_daily_from_raw(raw, category, days, start)
+    mp = d.get("Future Percentile Prices Monthly", {}).get("Category", {}).get(category)  # absent on custom comp sets
     mlabels = d["Future Percentile Prices"]["Labels"]
-    monthly = [{"month": m, **{col: _r(mp["Y_values"][mlabels.index(lab)][i], _nb_kind(col))
+    monthly = [{"month": m, **{col: (_r(mp["Y_values"][label_index(mlabels, lab)][i], _nb_kind(col))
+                                     if label_index(mlabels, lab) is not None else None)
                                for lab, col in NB_PCT_SERIES.items()}}
-               for i, m in enumerate(mp["X_values"])]
+               for i, m in enumerate(mp["X_values"])] if mp else []
     kp = d["Market KPI"]["Category"][category]
     klabels = d["Market KPI"]["Labels"]
-    kpi = [{"month": m, **{col: _r(kp["Y_values"][klabels.index(lab)][i], "count")
+    kpi = [{"month": m, **{col: (_r(kp["Y_values"][label_index(klabels, lab)][i], "count")
+                                 if label_index(klabels, lab) is not None else None)
                            for lab, col in NB_KPI_SERIES.items()}}
            for i, m in enumerate(kp["X_values"])]
     return _nb_facts_from_tables(meta, daily, monthly, kpi)
@@ -619,6 +679,7 @@ def main() -> int:
     ap.add_argument("--reduced", required=True, help="reducer output (text)")
     ap.add_argument("--subject-id", default=None)
     ap.add_argument("--category", default=None, help="neighborhood: bedroom category, e.g. 4")
+    ap.add_argument("--start", default=None, help="neighborhood: drop dates before this (the reducer's window_start)")
     ap.add_argument("--days", type=int, default=None, help="neighborhood: forward window the reducer used")
     ap.add_argument("--today", default=None, help="reservations: the 'today' the reducer used (YYYY-MM-DD)")
     args = ap.parse_args()
@@ -632,7 +693,7 @@ def main() -> int:
         elif args.source == "neighborhood":
             if not args.category:
                 raise ValueError("--category is required for neighborhood")
-            full = f_full(raw, args.category, args.days)
+            full = f_full(raw, args.category, args.days, args.start)
         elif args.source == "reservations":
             if not args.today:
                 raise ValueError("--today is required for reservations")
