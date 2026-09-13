@@ -198,6 +198,62 @@ check("second listing ~300 m away shares the market cache entry (cache=hit)", "c
 p6 = run_nb("--bedrooms", "4", seed=False)
 check("no cache + no real key -> exit 2, not a crash", p6.returncode == 2, p6.stderr[:120])
 
+# (summary moved to the end of the file)
+
+# --- calendar reconciliation block + fact-class harness ---------------------
+print("\nreconcile_pms calendar block + factcheck smoke test\n")
+import reconcile_pms as rp2  # noqa: E402
+
+def day(d, status="AVAILABLE", price_cents=40000, min_stay=2, note=None):
+    return {"date": d, "min_stay": min_stay, "note": note,
+            "status": {"reason": status, "available": status == "AVAILABLE"},
+            "price": {"amount": price_cents, "currency": "CAD"}}
+def pl(price=400, status="", min_stay=2, unbookable=0):
+    return {"price": price, "booking_status": status, "min_stay": min_stay, "unbookable": unbookable}
+
+cal_days = [
+    day("2027-01-01"),                                        # clean pair, ratio 1.0
+    day("2027-01-02"),
+    day("2027-01-03", "RESERVED", 60000),                     # PL says booked too: agreed
+    day("2027-01-04", "RESERVED", 70000, note="Off the platform"),   # PL says available: INVISIBLE
+    day("2027-01-05", "RESERVED", 50000, note="Owner's Stay"),       # invisible + owner stay
+    day("2027-01-06", price_cents=44000),                     # ratio 1.10 -> price drift
+    day("2027-01-07", min_stay=3),                            # min-stay 3 vs PL 2 -> mismatch
+    day("2027-01-08", min_stay=3),                            # min-stay 3 vs PL sentinel -1 -> NOT a mismatch
+    day("2027-01-09", price_cents=0),                         # zero price: excluded from pairs
+    day("2027-01-10"),
+]
+cal_pl = {
+    "2027-01-01": pl(), "2027-01-02": pl(), "2027-01-03": pl(600, "Booked"),
+    "2027-01-04": pl(700), "2027-01-05": pl(500), "2027-01-06": pl(400),
+    "2027-01-07": pl(), "2027-01-08": pl(min_stay=-1), "2027-01-09": pl(), "2027-01-10": pl(),
+}
+c = fc.calendar_rows(cal_days, cal_pl)
+check("reserved nights counted", c["pms_reserved"] == 3, str(c["pms_reserved"]))
+check("invisible = PMS reserved but PL available (2)", len(c["invisible"]) == 2 and {d["date"] for d in c["invisible"]} == {"2027-01-04", "2027-01-05"})
+check("owner stay detected from the PMS note", c["owner_stay_count"] == 1)
+check("agreed booked night is NOT invisible", "2027-01-03" not in {d["date"] for d in c["invisible"]})
+check("markup measured on available, non-zero, paired nights only (6)", c["paired_dates"] == 6, str(c["paired_dates"]))
+check("markup median is 1.0 for a no-markup listing", c["markup_median"] == 1.0, str(c["markup_median"]))
+check("ratio 1.10 date is a price drift row", any(d["date"] == "2027-01-06" and "price" in d["why"] for d in c["drift"]))
+check("min-stay 3 vs 2 is a mismatch", c["min_stay_mismatch"] == 1 and any(d["date"] == "2027-01-07" for d in c["drift"]), str(c["min_stay_mismatch"]))
+check("PL sentinel -1 min-stay is NOT a mismatch", not any(d["date"] == "2027-01-08" for d in c["drift"]))
+check("pms_min_mode is the most common PMS min-stay", c["pms_min_mode"] == 2)
+
+import io as _io
+buf = _io.StringIO(); rp2.print_calendar_block("fixture-listing-id", "Fixture House", c, buf)
+block = buf.getvalue()
+check("block has header + invisible + drift sections", "## calendar" in block and "### invisible" in block and "### drift" in block)
+cfull = fc.calendar_facts_full({"pms_days": cal_days, "pl_rows": cal_pl})
+cred = fc.calendar_facts_reduced(block)
+cbad = fc.compare(cfull, cred, fc.CALENDAR_FACTS)
+check("all 13 calendar fact classes survive the printed block", not cbad, "; ".join(cbad))
+check("trailing non-CSV text after a blank line does not pollute the drift block",
+      not fc.compare(cfull, fc.calendar_facts_reduced(block + "\nExclusion set written to /x\n*** 2 nights ***\n"), fc.CALENDAR_FACTS))
+ltr = fc.calendar_rows([day(f"2027-02-{i:02d}", min_stay=90) for i in range(1, 8)], {f"2027-02-{i:02d}": pl(min_stay=-1) for i in range(1, 8)})
+buf2 = _io.StringIO(); rp2.print_calendar_block("x", "LTR", ltr, buf2)
+check("90-night min-stay prints the long-term-rental NOTE, zero drift rows", "long-term rental" in buf2.getvalue() and len(ltr["drift"]) == 0)
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:

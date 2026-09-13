@@ -25,6 +25,7 @@ USAGE
 -----
     python3 factcheck.py airroi --full raw.json --reduced reduced.txt [--subject-id ID]
     python3 factcheck.py neighborhood --full raw.json --reduced reduced.txt --category 4 [--days N]
+    python3 factcheck.py calendar --full <gate bundle>.json --reduced <one listing's block>.txt
     exit 0 = every fact matches, exit 1 = mismatch (listed), exit 2 = could not check
 """
 
@@ -44,6 +45,8 @@ PRECISION = {
     # $700 to a p75 of $1,115 does not read the cents, and 85.29% vs 85% is not a
     # different market.
     "nb_price": 0, "nb_pct": 0, "count": 0,
+    # calendar reconciliation: markup ratio to 3 dp (1.000 = no markup), prices whole
+    "ratio": 3, "price": 0,
 }
 
 
@@ -339,9 +342,133 @@ def neighborhood_facts_reduced(text: str) -> dict:
     return _nb_facts_from_tables(m, daily, monthly, kpi)
 
 
+# ---------------------------------------------------------------- PMS calendar vs PriceLabs
+
+CALENDAR_FACTS = [
+    "pms_days", "pms_min_mode", "pms_reserved", "pl_booked", "invisible_count", "invisible_digest",
+    "owner_stay_count", "paired_dates", "markup_median", "markup_stdev",
+    "min_stay_mismatch", "drift_count", "drift_digest",
+]
+CAL_INVISIBLE_COLUMNS = ["date", "pms_price", "note"]
+CAL_DRIFT_COLUMNS = ["date", "pms_status", "pms_price", "pl_price", "ratio", "pms_min", "pl_min", "why"]
+DRIFT_TOLERANCE = 0.05  # ratio further than this from the median is a drift row
+SENTINELS = {"-1", "-2", "-1.0", "-2.0"}  # PriceLabs "no value" markers
+
+
+def _cal_is_booked(status) -> bool:
+    return str(status or "").strip().lower().startswith("booked")
+
+
+def calendar_rows(pms_days: list[dict], pl_rows: dict) -> dict:
+    """Everything the calendar block prints, computed from the raw pair. Shared by the
+    gate (to print) and the harness's FULL side (to check). The REDUCED side re-derives
+    the same facts by parsing the printed block; it never calls this."""
+    import statistics
+    reserved = [d for d in pms_days if (d.get("status") or {}).get("reason") == "RESERVED"]
+    invisible = [d for d in reserved if d["date"] in pl_rows
+                 and not _cal_is_booked(pl_rows[d["date"]].get("booking_status"))
+                 and not pl_rows[d["date"]].get("unbookable")]
+    owner = [d for d in reserved if "owner" in str(d.get("note") or "").lower()]
+    # markup is measured on nights that are for sale in both systems; a booked night's
+    # calendar price is whatever it sold at, not a live ask
+    pairs = []
+    for d in pms_days:
+        row = pl_rows.get(d["date"])
+        if not row or (d.get("status") or {}).get("reason") == "RESERVED" or _cal_is_booked(row.get("booking_status")):
+            continue
+        pms_p = (d.get("price") or {}).get("amount")
+        pl_p = row.get("price")
+        try:
+            pms_p, pl_p = float(pms_p) / 100.0, float(pl_p)
+        except (TypeError, ValueError):
+            continue
+        if pl_p <= 0 or pms_p <= 0:
+            continue
+        pairs.append((d, row, pms_p, pl_p, pms_p / pl_p))
+    ratios = [p[4] for p in pairs]
+    med = _r(statistics.median(ratios), "ratio") if ratios else None
+    sd = _r(statistics.pstdev(ratios), "ratio") if len(ratios) > 1 else (0.0 if ratios else None)
+    drift, mism = [], 0
+    for d, row, pms_p, pl_p, ratio in pairs:
+        why = []
+        if med is not None and abs(ratio - med) > DRIFT_TOLERANCE:
+            why.append("price")
+        pms_min, pl_min = d.get("min_stay"), row.get("min_stay")
+        # -1 / -2 are PriceLabs sentinels for "no value", never a real min-stay; comparing
+        # against them flagged every date of a listing PriceLabs had no min-stay for.
+        if (pms_min not in (None, "") and pl_min not in (None, "")
+                and str(pl_min) not in SENTINELS and int(pms_min) != int(pl_min)):
+            why.append("min_stay"); mism += 1
+        if why:
+            drift.append({"date": d["date"], "pms_status": "AVAILABLE", "pms_price": _r(pms_p, "price"),
+                          "pl_price": _r(pl_p, "price"), "ratio": _r(ratio, "ratio"),
+                          "pms_min": pms_min, "pl_min": pl_min, "why": "+".join(why)})
+    from collections import Counter
+    mins = Counter(int(d["min_stay"]) for d in pms_days if d.get("min_stay") not in (None, ""))
+    return {
+        "pms_min_mode": mins.most_common(1)[0][0] if mins else None,
+        "pms_days": len(pms_days), "pms_reserved": len(reserved), "invisible": invisible,
+        "pl_booked": sum(1 for r in pl_rows.values() if _cal_is_booked(r.get("booking_status"))),
+        "owner_stay_count": len(owner), "paired_dates": len(pairs),
+        "markup_median": med, "markup_stdev": sd, "min_stay_mismatch": mism, "drift": drift,
+    }
+
+
+def _cal_facts_from(c: dict) -> dict:
+    return {
+        "pms_days": c["pms_days"], "pms_min_mode": c["pms_min_mode"],
+        "pms_reserved": c["pms_reserved"], "pl_booked": c["pl_booked"],
+        "invisible_count": len(c["invisible"]),
+        "invisible_digest": _digest((d["date"], _r((d.get("price") or {}).get("amount", 0) / 100.0, "price")) for d in c["invisible"]),
+        "owner_stay_count": c["owner_stay_count"], "paired_dates": c["paired_dates"],
+        "markup_median": c["markup_median"], "markup_stdev": c["markup_stdev"],
+        "min_stay_mismatch": c["min_stay_mismatch"], "drift_count": len(c["drift"]),
+        "drift_digest": _digest((d["date"], f"{d['ratio']}/{d['why']}") for d in c["drift"]),
+    }
+
+
+def calendar_facts_full(raw: dict) -> dict:
+    """raw = the gate's cached bundle: {"pms_days": [...], "pl_rows": {date: row}}"""
+    return _cal_facts_from(calendar_rows(raw["pms_days"], raw["pl_rows"]))
+
+
+def calendar_facts_reduced(text: str) -> dict:
+    meta, blocks, cur = {}, {}, None
+    for line in text.splitlines():
+        if line.startswith("### "):
+            cur = line[4:].strip(); blocks[cur] = []
+        elif line.startswith("## calendar"):
+            for kv in line.split()[2:]:
+                if "=" in kv:
+                    k, v = kv.split("=", 1); meta[k] = v
+        elif line.startswith("#"):
+            continue
+        elif not line.strip():
+            cur = None  # a blank line ends the block; whatever follows is not CSV
+        elif cur:
+            blocks[cur].append(line)
+    inv = list(csv.DictReader(io.StringIO("\n".join(blocks.get("invisible", [])))))
+    dr = list(csv.DictReader(io.StringIO("\n".join(blocks.get("drift", [])))))
+    def num(v, kind):
+        return _r(v, kind) if v not in (None, "", "none") else None
+    return {
+        "pms_days": int(meta["pms_days"]),
+        "pms_min_mode": int(meta["pms_min_mode"]) if meta.get("pms_min_mode", "none") != "none" else None,
+        "pms_reserved": int(meta["pms_reserved"]),
+        "pl_booked": int(meta["pl_booked"]), "invisible_count": len(inv),
+        "invisible_digest": _digest((r["date"], _r(r["pms_price"], "price")) for r in inv),
+        "owner_stay_count": int(meta["owner_stays"]), "paired_dates": int(meta["paired"]),
+        "markup_median": num(meta.get("markup_median"), "ratio"),
+        "markup_stdev": num(meta.get("markup_stdev"), "ratio"),
+        "min_stay_mismatch": int(meta["min_stay_mismatch"]), "drift_count": len(dr),
+        "drift_digest": _digest((r["date"], f"{_r(r['ratio'], 'ratio')}/{r['why']}") for r in dr),
+    }
+
+
 SOURCES = {
     "airroi": (AIRROI_FACTS, airroi_facts_full, airroi_facts_reduced),
     "neighborhood": (NEIGHBORHOOD_FACTS, neighborhood_facts_full, neighborhood_facts_reduced),
+    "calendar": (CALENDAR_FACTS, calendar_facts_full, calendar_facts_reduced),
 }
 
 

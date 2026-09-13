@@ -24,6 +24,22 @@ PriceLabs is ground truth for PRICE and MARKET.
 A date where the PMS says RESERVED and PriceLabs says available is a SYNC DEFECT.
 It is never an underperforming date, and it must never enter the discount candidate set.
 
+THE CALENDAR BLOCK (why the raw PMS calendar never enters context)
+------------------------------------------------------------------
+A 365-day Hospitable calendar is ~49,000 tokens of JSON. Step 5 needs three things from
+it: which nights are sold (the reconciliation above), the per-listing markup between the
+PMS calendar price and the PriceLabs price (measured, never assumed), and any dates where
+the two systems disagree on price or min-stay. All three are computed here and printed as
+a `## calendar` block per listing: a header line with the counts and the markup median
+and spread, then `### invisible` (sold nights PriceLabs cannot see) and `### drift`
+(available nights whose price ratio is off the median by more than 5%, or whose min-stay
+differs). A healthy sync prints a few lines. A broken one prints every disagreeing date,
+which is exactly when you want to see them.
+
+The raw bundle for each listing is cached under ~/.cache/revenue-manager/reconcile/ so
+`fetch/factcheck.py calendar` can prove the block carries every fact, and a re-run inside
+--ttl-days makes no PMS call.
+
 USAGE
 -----
     python3 reconcile_pms.py --days 180
@@ -44,6 +60,7 @@ EXIT CODES
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -52,7 +69,11 @@ import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _cache import cache_dir  # noqa: E402
+from factcheck import CAL_DRIFT_COLUMNS, CAL_INVISIBLE_COLUMNS, calendar_rows, _r  # noqa: E402
 from pathlib import Path
 
 PL_BASE = "https://api.pricelabs.co"
@@ -234,6 +255,30 @@ def night_value(day: dict) -> float:
     return ((day.get("price") or {}).get("amount") or 0) / 100.0
 
 
+def print_calendar_block(lid: str, name: str, c: dict, out) -> None:
+    """One listing's `## calendar` block. Pure formatting; the harness parses this back."""
+    w = csv.writer(out, lineterminator="\n")
+    print(f"\n## calendar listing={lid[:8]} name={name.replace(' ', '_')} pms_days={c['pms_days']} "
+          f"pms_min_mode={c['pms_min_mode'] if c['pms_min_mode'] is not None else 'none'} "
+          f"pms_reserved={c['pms_reserved']} pl_booked={c['pl_booked']} invisible={len(c['invisible'])} "
+          f"owner_stays={c['owner_stay_count']} paired={c['paired_dates']} "
+          f"markup_median={c['markup_median'] if c['markup_median'] is not None else 'none'} "
+          f"markup_stdev={c['markup_stdev'] if c['markup_stdev'] is not None else 'none'} "
+          f"min_stay_mismatch={c['min_stay_mismatch']} drift={len(c['drift'])}", file=out)
+    if c["markup_stdev"] is not None and c["markup_stdev"] > 0.05:
+        print("# WARNING markup spread > 5%: sync is broken or markup logic is misconfigured (SKILL Step 5)", file=out)
+    if c["pms_min_mode"] is not None and c["pms_min_mode"] >= 28:
+        print(f"# NOTE PMS min-stay is {c['pms_min_mode']} nights on most dates: this listing is configured "
+              "as a long-term rental, not an STR. Nightly pricing logic does not apply.", file=out)
+    print("### invisible", file=out); w.writerow(CAL_INVISIBLE_COLUMNS)
+    for d in c["invisible"]:
+        w.writerow([d["date"], _r((d.get("price") or {}).get("amount", 0) / 100.0, "price"),
+                    (d.get("note") or "").replace("\n", " ")[:40]])
+    print("### drift", file=out); w.writerow(CAL_DRIFT_COLUMNS)
+    for d in c["drift"]:
+        w.writerow([d[k] if d.get(k) is not None else "" for k in CAL_DRIFT_COLUMNS])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days", type=int, default=180, help="forward window in days (default 180)")
@@ -242,6 +287,9 @@ def main() -> int:
     ap.add_argument("--listing", action="append", help="limit to these listing ids (repeatable)")
     ap.add_argument("--json", help="write the exclusion set to this path")
     ap.add_argument("--pms", default="smartbnb", help="PriceLabs pms_name (default smartbnb)")
+    ap.add_argument("--ttl-days", type=float, default=1, help="serve the PMS calendar from cache inside this window")
+    ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--no-calendar", action="store_true", help="portfolio table only, skip the per-listing blocks")
     args = ap.parse_args()
 
     d_from = args.d_from or (date.today() + timedelta(days=1)).isoformat()
@@ -268,6 +316,7 @@ def main() -> int:
     print("-" * 78)
 
     exclusions: dict[str, list[str]] = defaultdict(list)
+    cal_blocks: list = []
     total_missed = total_value = 0
     unsynced: list[str] = []
     # Listings whose PMS calendar could not be read. They are NOT verified, so
@@ -289,14 +338,30 @@ def main() -> int:
             unsynced.append(f"{name}: {pl_rows['__error__']}")
             print(f"{name:26s} {'-':>8s} {'-':>7s} {'-':>10s} {'-':>11s}  NOT SYNCED")
             continue
+        bundle_path = os.path.join(cache_dir("reconcile"), f"{lid[:8]}_{d_from}_{d_to}.json")
+        days = None
+        if not args.no_cache and os.path.isfile(bundle_path):
+            try:
+                b = json.load(open(bundle_path))
+                if time.time() - datetime.fromisoformat(b["pulled_at"]).timestamp() <= args.ttl_days * 86400:
+                    days = b["pms_days"]
+            except Exception:  # noqa: BLE001
+                days = None
         try:
-            days = fetch_pms_calendar(ho_key, lid, d_from, d_to)
+            if days is None:
+                days = fetch_pms_calendar(ho_key, lid, d_from, d_to)
+                tmp = bundle_path + ".tmp"
+                json.dump({"pulled_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                           "listing": lid, "window": [d_from, d_to], "pms_days": days, "pl_rows": pl_rows},
+                          open(tmp, "w"))
+                os.replace(tmp, bundle_path)
         except CheckCannotRun as e:
             pms_failed.append(f"{name}: {e}")
             print(f"{name:26s} {'-':>8s} {'-':>7s} {'-':>10s} {'-':>11s}  PMS READ FAILED")
             continue
 
         r = reconcile(days, pl_rows)
+        cal_blocks.append((lid, name, calendar_rows(days, pl_rows)))
         value = sum(night_value(d) for d in r["invisible"])
         total_missed += len(r["invisible"])
         total_value += value
@@ -328,6 +393,10 @@ def main() -> int:
               f"to PriceLabs. ***")
         print("These dates are SOLD. They must be excluded from the discount candidate")
         print("set and reported as a sync defect, not treated as underperformance.")
+
+    if not args.no_calendar:
+        for lid, name, c in cal_blocks:
+            print_calendar_block(lid, name, c, sys.stdout)
 
     if args.json:
         os.makedirs(os.path.dirname(os.path.abspath(args.json)), exist_ok=True)
