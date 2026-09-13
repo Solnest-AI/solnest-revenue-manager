@@ -250,6 +250,46 @@ def split_payload(payload) -> tuple[dict[str, list[dict]], list[tuple[str, str]]
 
 # ---------------------------------------------------------------- reducers
 
+def pacing_line(rows: list[dict], today: str | None = None, windows=(30, 60, 90), min_stly_cov: float = 0.20) -> str:
+    """Rolling forward pacing: occupancy now vs same time last year, next 30/60/90 nights.
+
+    Why this exists: the per-date table carries `booking_status_STLY` for every night, but a
+    reader has to aggregate 366 rows to see it, and in a live decision eval the reduced side
+    called a listing "even" that was 20% booked against 44% STLY. Same corrections as tier_b:
+    blocked nights leave the denominator, and a window with under 20% STLY coverage says
+    "n/a" rather than 0%. Verdict: behind / ahead when the gap is more than 5 points.
+    """
+    fwd = sorted((r for r in rows if r.get("date") and (today is None or str(r["date"]) > today)),
+                 key=lambda r: str(r["date"]))
+    bits = []
+    for w in windows:
+        win = fwd[:w]
+        if not win:
+            continue
+        booked = sum(1 for r in win if is_booked(str(r.get("booking_status", ""))))
+        blocked = sum(1 for r in win if str(r.get("booking_status", "")).strip().lower() == "blocked")
+        bookable = len(win) - blocked
+        occ = 100.0 * booked / bookable if bookable else None
+        stly_vals = [str(r.get("booking_status_STLY", "")).strip() for r in win]
+        cov = sum(1 for v in stly_vals if v and v not in SENTINELS)
+        if cov / len(win) >= min_stly_cov:
+            s_booked = sum(1 for v in stly_vals if is_booked(v))
+            s_blocked = sum(1 for v in stly_vals if v.lower() == "blocked")
+            s_bookable = len(win) - s_blocked
+            stly = 100.0 * s_booked / s_bookable if s_bookable else None
+        else:
+            stly = None
+        if occ is None:
+            bits.append(f"next{w} occ=n/a")
+            continue
+        if stly is None:
+            bits.append(f"next{w} occ={occ:.1f}% stly=n/a")
+        else:
+            verdict = "behind" if occ < stly - 5 else "ahead" if occ > stly + 5 else "even"
+            bits.append(f"next{w} occ={occ:.1f}% stly={stly:.1f}% ({verdict})")
+    return "[pacing] " + " | ".join(bits) if bits else "[pacing] (no forward rows)"
+
+
 def tier_a(rows: list[dict]) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -538,7 +578,8 @@ def main() -> None:
             out_parts.append(f"{header}\n{summary}\n{mline}\n[months]\n{roll}\n[exceptions]\n{exc}")
         if args.tier == "a":
             mline = f"[metrics] {metrics_line(metrics[lid])}\n" if lid in metrics else ""
-            out_parts.append(f"{header}\n{mline}[per-date]\n{tier_a(rows)}")
+            pline = pacing_line(rows, today.isoformat()) + "\n"
+            out_parts.append(f"{header}\n{mline}{pline}[per-date]\n{tier_a(rows)}")
         elif args.tier == "both":
             out_parts.append(f"{header}\n[per-date]\n{tier_a(rows)}")
 

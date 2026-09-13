@@ -409,7 +409,10 @@ CALENDAR_FACTS = [
     "pms_days", "pms_min_mode", "pms_reserved", "pl_booked", "invisible_count", "invisible_digest",
     "owner_stay_count", "paired_dates", "markup_median", "markup_stdev",
     "min_stay_mismatch", "drift_count", "drift_digest",
+    "blocked_runs", "blocked_nights", "blocked_digest", "gap_runs", "gap_digest",
 ]
+CAL_BLOCKED_COLUMNS = ["start", "end", "nights", "source", "note"]
+CAL_GAP_COLUMNS = ["start", "end", "nights"]
 CAL_INVISIBLE_COLUMNS = ["date", "pms_price", "note"]
 CAL_DRIFT_COLUMNS = ["date", "pms_status", "pms_price", "pl_price", "ratio", "pms_min", "pl_min", "why"]
 DRIFT_TOLERANCE = 0.05  # ratio further than this from the median is a drift row
@@ -466,12 +469,45 @@ def calendar_rows(pms_days: list[dict], pl_rows: dict) -> dict:
                           "pms_min": pms_min, "pl_min": pl_min, "why": "+".join(why)})
     from collections import Counter
     mins = Counter(int(d["min_stay"]) for d in pms_days if d.get("min_stay") not in (None, ""))
+    # Blocked runs: host/user blocks are not for sale and not revenue. The raw calendar shows
+    # them; the printed block did not, and a live eval saw the full side call a block an
+    # "owner stay" the reduced side could not see. Gaps: single or double available nights
+    # boxed in by non-available nights (the framework's orphan-day logic needs them named).
+    by_date = sorted(pms_days, key=lambda d: str(d["date"]))
+    blocked_runs, gaps = [], []
+    from datetime import date as _d, timedelta as _td
+    for d in by_date:
+        st = d.get("status") or {}
+        if st.get("reason") != "BLOCKED":
+            continue
+        src = str(st.get("source_type") or st.get("source") or "")
+        note = (d.get("note") or "").replace("\n", " ")[:40]
+        if blocked_runs and blocked_runs[-1]["source"] == src and blocked_runs[-1]["note"] == note \
+                and _d.fromisoformat(blocked_runs[-1]["end"]) + _td(days=1) == _d.fromisoformat(str(d["date"])[:10]):
+            blocked_runs[-1]["end"], blocked_runs[-1]["nights"] = d["date"], blocked_runs[-1]["nights"] + 1
+        else:
+            blocked_runs.append({"start": d["date"], "end": d["date"], "nights": 1, "source": src, "note": note})
+    avail = [(d.get("status") or {}).get("reason") == "AVAILABLE" for d in by_date]
+    i = 0
+    while i < len(by_date):
+        if avail[i]:
+            j = i
+            while j + 1 < len(by_date) and avail[j + 1]:
+                j += 1
+            run_len = j - i + 1
+            boxed = i > 0 and j < len(by_date) - 1 and not avail[i - 1] and not avail[j + 1]
+            if boxed and run_len <= 2:
+                gaps.append({"start": by_date[i]["date"], "end": by_date[j]["date"], "nights": run_len})
+            i = j + 1
+        else:
+            i += 1
     return {
         "pms_min_mode": mins.most_common(1)[0][0] if mins else None,
         "pms_days": len(pms_days), "pms_reserved": len(reserved), "invisible": invisible,
         "pl_booked": sum(1 for r in pl_rows.values() if _cal_is_booked(r.get("booking_status"))),
         "owner_stay_count": len(owner), "paired_dates": len(pairs),
         "markup_median": med, "markup_stdev": sd, "min_stay_mismatch": mism, "drift": drift,
+        "blocked_runs": blocked_runs, "gaps": gaps,
     }
 
 
@@ -484,6 +520,11 @@ def _cal_facts_from(c: dict) -> dict:
         "owner_stay_count": c["owner_stay_count"], "paired_dates": c["paired_dates"],
         "markup_median": c["markup_median"], "markup_stdev": c["markup_stdev"],
         "min_stay_mismatch": c["min_stay_mismatch"], "drift_count": len(c["drift"]),
+        "blocked_runs": len(c.get("blocked_runs", [])),
+        "blocked_nights": sum(int(b["nights"]) for b in c.get("blocked_runs", [])),
+        "blocked_digest": _digest((f"{b['start']}..{b['end']}", f"{b['source']}|{b['note']}") for b in c.get("blocked_runs", [])),
+        "gap_runs": len(c.get("gaps", [])),
+        "gap_digest": _digest((f"{g['start']}..{g['end']}", g["nights"]) for g in c.get("gaps", [])),
         "drift_digest": _digest((d["date"], f"{d['ratio']}/{d['why']}") for d in c["drift"]),
     }
 
@@ -510,6 +551,8 @@ def calendar_facts_reduced(text: str) -> dict:
             blocks[cur].append(line)
     inv = list(csv.DictReader(io.StringIO("\n".join(blocks.get("invisible", [])))))
     dr = list(csv.DictReader(io.StringIO("\n".join(blocks.get("drift", [])))))
+    bl = list(csv.DictReader(io.StringIO("\n".join(blocks.get("blocked", [])))))
+    gp = list(csv.DictReader(io.StringIO("\n".join(blocks.get("gaps", [])))))
     def num(v, kind):
         return _r(v, kind) if v not in (None, "", "none") else None
     return {
@@ -523,6 +566,9 @@ def calendar_facts_reduced(text: str) -> dict:
         "markup_stdev": num(meta.get("markup_stdev"), "ratio"),
         "min_stay_mismatch": int(meta["min_stay_mismatch"]), "drift_count": len(dr),
         "drift_digest": _digest((r["date"], f"{_r(r['ratio'], 'ratio')}/{r['why']}") for r in dr),
+        "blocked_runs": len(bl), "blocked_nights": sum(int(r["nights"]) for r in bl),
+        "blocked_digest": _digest((f"{r['start']}..{r['end']}", f"{r['source']}|{r['note']}") for r in bl),
+        "gap_runs": len(gp), "gap_digest": _digest((f"{r['start']}..{r['end']}", int(r["nights"])) for r in gp),
     }
 
 

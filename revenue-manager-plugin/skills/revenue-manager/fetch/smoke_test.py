@@ -222,32 +222,40 @@ cal_days = [
     day("2027-01-08", min_stay=3),                            # min-stay 3 vs PL sentinel -1 -> NOT a mismatch
     day("2027-01-09", price_cents=0),                         # zero price: excluded from pairs
     day("2027-01-10"),
+    day("2027-01-11", "BLOCKED"),                             # host block run (2 nights) ...
+    day("2027-01-12", "BLOCKED"),
+    day("2027-01-13"),                                        # ... one open night boxed in by the block and a booking = orphan gap
+    day("2027-01-14", "RESERVED", 60000),
 ]
 cal_pl = {
     "2027-01-01": pl(), "2027-01-02": pl(), "2027-01-03": pl(600, "Booked"),
     "2027-01-04": pl(700), "2027-01-05": pl(500), "2027-01-06": pl(400),
     "2027-01-07": pl(), "2027-01-08": pl(min_stay=-1), "2027-01-09": pl(), "2027-01-10": pl(),
+    "2027-01-11": pl(status="Blocked"), "2027-01-12": pl(status="Blocked"), "2027-01-13": pl(), "2027-01-14": pl(600, "Booked"),
 }
 c = fc.calendar_rows(cal_days, cal_pl)
-check("reserved nights counted", c["pms_reserved"] == 3, str(c["pms_reserved"]))
+check("reserved nights counted", c["pms_reserved"] == 4, str(c["pms_reserved"]))
 check("invisible = PMS reserved but PL available (2)", len(c["invisible"]) == 2 and {d["date"] for d in c["invisible"]} == {"2027-01-04", "2027-01-05"})
 check("owner stay detected from the PMS note", c["owner_stay_count"] == 1)
 check("agreed booked night is NOT invisible", "2027-01-03" not in {d["date"] for d in c["invisible"]})
-check("markup measured on available, non-zero, paired nights only (6)", c["paired_dates"] == 6, str(c["paired_dates"]))
+check("sync ratio measured on non-reserved, non-zero, paired nights (9: blocked nights still carry a pushed price)", c["paired_dates"] == 9, str(c["paired_dates"]))
 check("markup median is 1.0 for a no-markup listing", c["markup_median"] == 1.0, str(c["markup_median"]))
 check("ratio 1.10 date is a price drift row", any(d["date"] == "2027-01-06" and "price" in d["why"] for d in c["drift"]))
 check("min-stay 3 vs 2 is a mismatch", c["min_stay_mismatch"] == 1 and any(d["date"] == "2027-01-07" for d in c["drift"]), str(c["min_stay_mismatch"]))
 check("PL sentinel -1 min-stay is NOT a mismatch", not any(d["date"] == "2027-01-08" for d in c["drift"]))
 check("pms_min_mode is the most common PMS min-stay", c["pms_min_mode"] == 2)
+check("host block run collapsed to one row of 2 nights", len(c["blocked_runs"]) == 1 and c["blocked_runs"][0]["nights"] == 2 and c["blocked_runs"][0]["start"] == "2027-01-11", str(c["blocked_runs"]))
+check("one open night boxed in by a block and a booking is an orphan gap", len(c["gaps"]) == 1 and c["gaps"][0]["start"] == "2027-01-13" and c["gaps"][0]["nights"] == 1, str(c["gaps"]))
+check("the two open nights at the start are NOT a gap (nothing before them)", not any(g["start"] == "2027-01-01" for g in c["gaps"]))
 
 import io as _io
 buf = _io.StringIO(); rp2.print_calendar_block("fixture-listing-id", "Fixture House", c, buf)
 block = buf.getvalue()
-check("block has header + invisible + drift sections", "## calendar" in block and "### invisible" in block and "### drift" in block)
+check("block has header + invisible + drift + blocked + gaps sections", all(x in block for x in ("## calendar", "### invisible", "### drift", "### blocked", "### gaps")))
 cfull = fc.calendar_facts_full({"pms_days": cal_days, "pl_rows": cal_pl})
 cred = fc.calendar_facts_reduced(block)
 cbad = fc.compare(cfull, cred, fc.CALENDAR_FACTS)
-check("all 13 calendar fact classes survive the printed block", not cbad, "; ".join(cbad))
+check("all 18 calendar fact classes survive the printed block", not cbad, "; ".join(cbad))
 check("trailing non-CSV text after a blank line does not pollute the drift block",
       not fc.compare(cfull, fc.calendar_facts_reduced(block + "\nExclusion set written to /x\n*** 2 nights ***\n"), fc.CALENDAR_FACTS))
 ltr = fc.calendar_rows([day(f"2027-02-{i:02d}", min_stay=90) for i in range(1, 8)], {f"2027-02-{i:02d}": pl(min_stay=-1) for i in range(1, 8)})
@@ -399,6 +407,22 @@ with tempfile.TemporaryDirectory() as td:
     po2 = subprocess.run([sys.executable, str(HERE / "reduce_overrides.py"), "--listing", "fixture-listing",
                           "--today", "2026-09-01", "--ttl-days", "36500"], capture_output=True, text=True, env=env)
 check("no overrides is a valid answer: exit 0, dates=0", po2.returncode == 0 and "dates=0" in po2.stdout, po2.stdout[:200] + po2.stderr[:200])
+
+# --- pacing line (Tier A header): rolling occupancy vs STLY with blocked nights out of the denominator
+rows = json.load(open(HERE / "test_fixture.json"))[0]["data"]   # `rows` was rebound to reservations above
+pl = rp.pacing_line(rows, "2027-03-31", windows=(8,))
+check("pacing line names the window and both occupancies", pl.startswith("[pacing] next8 occ=") and "stly=" in pl, pl)
+_fwd = [r for r in rows if str(r["date"]) > "2027-03-31"]          # the two 2026-09 rows are history
+_booked = sum(1 for r in _fwd if rp.is_booked(str(r.get("booking_status", ""))))
+_blocked = sum(1 for r in _fwd if str(r.get("booking_status", "")).strip().lower() == "blocked")
+_expect = 100.0 * _booked / (len(_fwd) - _blocked)
+check("pacing occupancy excludes blocked nights from the denominator and past rows", f"occ={_expect:.1f}%" in pl, pl)
+_six = rp.pacing_line(rows, "2027-03-31", windows=(6,))
+check("past rows are not in the window (next8 and next6 see the same 6 forward rows)", f"occ={_expect:.1f}%" in _six and _six.split("occ=")[1] == pl.split("occ=")[1], f"{pl} vs {_six}")
+_no_hist = [dict(r, booking_status_STLY="") for r in rows]
+check("no STLY history -> stly=n/a, never 0%", "stly=n/a" in rp.pacing_line(_no_hist, "2027-03-31", windows=(8,)))
+_behind = [dict(r, booking_status="", booking_status_STLY="Booked") for r in rows]
+check("0% booked against 100% STLY reads 'behind'", "(behind)" in rp.pacing_line(_behind, "2027-03-31", windows=(8,)))
 
 # --- summary ----------------------------------------------------------------
 print()

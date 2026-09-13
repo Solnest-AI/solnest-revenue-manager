@@ -73,7 +73,7 @@ from datetime import date, timedelta, datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _cache import cache_dir  # noqa: E402
-from factcheck import CAL_DRIFT_COLUMNS, CAL_INVISIBLE_COLUMNS, calendar_rows, _r  # noqa: E402
+from factcheck import CAL_BLOCKED_COLUMNS, CAL_DRIFT_COLUMNS, CAL_GAP_COLUMNS, CAL_INVISIBLE_COLUMNS, calendar_rows, _r  # noqa: E402
 from pathlib import Path
 
 PL_BASE = "https://api.pricelabs.co"
@@ -265,7 +265,8 @@ def print_calendar_block(lid: str, name: str, c: dict, out) -> None:
           f"markup_median={c['markup_median'] if c['markup_median'] is not None else 'none'} "
           f"markup_stdev={c['markup_stdev'] if c['markup_stdev'] is not None else 'none'} "
           f"min_stay_mismatch={c['min_stay_mismatch']} drift={len(c['drift'])} "
-          f"compared_at={c.get('compared_at', 'live')}", file=out)
+          f"blocked_runs={len(c.get('blocked_runs', []))} blocked_nights={sum(b['nights'] for b in c.get('blocked_runs', []))} "
+          f"gaps={len(c.get('gaps', []))} compared_at={c.get('compared_at', 'live')}", file=out)
     if c["markup_stdev"] is not None and c["markup_stdev"] > 0.05:
         print("# WARNING markup spread > 5%: sync is broken or markup logic is misconfigured (SKILL Step 5)", file=out)
     if c["pms_min_mode"] is not None and c["pms_min_mode"] >= 28:
@@ -278,6 +279,13 @@ def print_calendar_block(lid: str, name: str, c: dict, out) -> None:
     print("### drift", file=out); w.writerow(CAL_DRIFT_COLUMNS)
     for d in c["drift"]:
         w.writerow([d[k] if d.get(k) is not None else "" for k in CAL_DRIFT_COLUMNS])
+    # host/user blocks (not for sale, not revenue) and orphan gaps (1-2 open nights boxed in)
+    print("### blocked", file=out); w.writerow(CAL_BLOCKED_COLUMNS)
+    for b in c.get("blocked_runs", []):
+        w.writerow([b["start"], b["end"], b["nights"], b["source"], b["note"]])
+    print("### gaps", file=out); w.writerow(CAL_GAP_COLUMNS)
+    for g in c.get("gaps", []):
+        w.writerow([g["start"], g["end"], g["nights"]])
 
 
 def main() -> int:

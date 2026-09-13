@@ -530,7 +530,8 @@ def cmd_run(args) -> int:
     if (od / "results.jsonl").is_file() and not args.redo:
         for line in open(od / "results.jsonl"):
             r = json.loads(line)
-            done.add((r["listing"], r["condition"], r["rep"]))
+            if r.get("status") == "ok":       # a truncated/refused rep is re-run, not skipped
+                done.add((r["listing"], r["condition"], r["rep"]))
     jobs = []
     for l in roster["listings"]:
         id8 = l["id"][:8]
