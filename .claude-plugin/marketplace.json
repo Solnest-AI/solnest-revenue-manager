@@ -1,6 +1,8 @@
 {
   "name": "revenue-manager-rc",
-  "owner": { "name": "Solnest AI" },
+  "owner": {
+    "name": "Solnest AI"
+  },
   "plugins": [
     {
       "name": "revenue-manager",
@@ -8,5 +10,6 @@
       "description": "Release candidate: adds the Step 4.0 payload reducer (fetch/reduce_prices.py), cutting a per-listing PriceLabs pull from ~462k to ~200 tokens, plus fixes for the Booked (Check-In), empty-STLY, and -1/-2 sentinel traps.",
       "version": "4.2.0-rc1"
     }
-  ]
+  ],
+  "description": "Solnest Revenue Manager: recommend-only STR pricing analysis with a PMS reconciliation gate, PriceLabs payload reducer, and a Supabase audit trail."
 }
