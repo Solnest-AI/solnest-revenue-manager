@@ -319,7 +319,7 @@ Via the detected PMS MCP, pull:
 - **Recent reviews** (last 100 — feeds the flywheel's reviews/ranking spoke)
 - **Transactions / payouts** for at least the last 12 months
 
-> **Hospitable caveat (gate this to Hospitable):** `hospitable_list_reservations` returns ONLY upcoming/active reservations — past/completed bookings are NOT available there. Route **all historical/cleared-rate pulls** (booked nights by month, realized ADR by month, YoY/STLY, channel-mix history) to `hospitable_list_transactions` (and/or `pricelabs_list_reservations`). Reserve `hospitable_list_reservations` for forward/active bookings only. Other PMSs may expose full history via their reservations endpoint — use it there; this routing rule is Hospitable-specific.
+> **Hospitable caveat (gate this to Hospitable):** `hospitable_list_reservations` returns ONLY upcoming/active reservations. The reducer above reads PriceLabs' feed, which carries history AND the `manual` channel for off-platform bookings, so it is the history source on every PMS. Original note: — past/completed bookings are NOT available there. Route **all historical/cleared-rate pulls** (booked nights by month, realized ADR by month, YoY/STLY, channel-mix history) to `hospitable_list_transactions` (and/or `pricelabs_list_reservations`). Reserve `hospitable_list_reservations` for forward/active bookings only. Other PMSs may expose full history via their reservations endpoint — use it there; this routing rule is Hospitable-specific.
 
 For each property, compute:
 - Booked nights by month (this year, last year, two years back if available)
@@ -337,7 +337,7 @@ Via PriceLabs (primary), pull:
 - All listings with current **min / base / max / tags** (`pricelabs_list_listings`, `pricelabs_get_listing`) — these define the floor/ceiling bounds
 - **Per-date recommended prices** for the next 365 days, with reason factors (`pricelabs_get_listing_prices`) — this is the forward **ASK** curve PriceLabs pushes to the PMS
 - **Neighborhood / market data** via `pricelabs_get_neighborhood_data` — **this IS the comp engine** (full structure in Step 4a)
-- **Listing-prices ADR field + reservations** (`pricelabs_get_listing_prices` ADR field, `pricelabs_list_reservations`) — the CLEARED/realized rate
+- **Reservation history, via the reducer, never the raw tool.** `pricelabs_list_reservations` returns every booking as a full record with the guest's name, ~13,000 tokens per listing for two years. Run `python3 fetch/reduce_reservations.py --listing <id> --currency <PMS currency>` instead: ~900 tokens carrying the CLEARED/realized rate by month (nights, revenue, ADR), lead-time and length-of-stay distributions, channel mix, cancellations, and the individual bookings from the last 14 days (the booked-within-hours red flag needs those). `guestName` is dropped at the parsing boundary and never cached. Cached one day; `fetch/factcheck.py reservations` proves 12 facts survive. Exit 2 means history is unverified this run, not empty.
 - All active overrides / DSOs / custom rates (`pricelabs_list_overrides`)
 - `last_refreshed_at` / freshness markers (feeds the freshness guard 2.7)
 
@@ -441,7 +441,7 @@ It is never an underperforming date. It never enters the discount candidate set.
 
 ```bash
 cd <plugin>/skills/revenue-manager/fetch        # same directory as Step 4.0
-python3 reconcile_pms.py --days 180 --json .pl_cache/exclusions.json
+python3 fetch/reconcile_pms.py --days 365 --json ~/.cache/revenue-manager/exclusions.json
 ```
 
 - Exit **0** = the check ran for every listing. Read the report.

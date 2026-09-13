@@ -254,6 +254,70 @@ ltr = fc.calendar_rows([day(f"2027-02-{i:02d}", min_stay=90) for i in range(1, 8
 buf2 = _io.StringIO(); rp2.print_calendar_block("x", "LTR", ltr, buf2)
 check("90-night min-stay prints the long-term-rental NOTE, zero drift rows", "long-term rental" in buf2.getvalue() and len(ltr["drift"]) == 0)
 
+# (summary moved to the end of the file)
+
+# --- reservations reducer + fact-class harness ------------------------------
+print("\nreduce_reservations + factcheck smoke test\n")
+import reduce_reservations as rr  # noqa: E402
+
+def resv(rid, ci, booked, nights, rev, status="booked", channel="airbnb", cancelled_on=None):
+    return {"listing_id": "fixture-listing", "reservation_id": rid, "check_in": ci,
+            "check_out": ci, "booking_status": status, "booked_date": booked + "T12:00:00.000Z",
+            "rental_revenue": str(rev), "no_of_days": nights, "currency": "CAD",
+            "cancelled_on": cancelled_on, "booking_channel": channel, "guestName": "Jane Q. Private",
+            "guest_count": 2}
+TODAY = "2027-01-15"
+res_fx = {"data": [
+    resv("r1", "2027-02-01", "2026-11-01", 3, 900.0),                      # lead 92, LOS 3
+    resv("r2", "2027-02-10", "2027-01-10", 1, 200.0, channel="vrbo"),        # lead 31, LOS 1, recent (5d)
+    resv("r3", "2027-02-20", "2027-01-14", 7, 2100.0, channel="manual"),     # lead 37, LOS 7, recent (1d)
+    resv("r4", "2027-03-05", "2026-12-01", 2, 500.0, status="cancelled"),    # cancelled: counted, excluded
+    resv("r5", "2027-03-10", "2027-03-08", 4, 1000.0, channel="bcom"),       # lead 2, LOS 4
+    resv("r6", "2027-03-12", "2026-06-01", 2, 400.0, cancelled_on="2026-07-01"),  # cancelled via date
+]}
+json.dump(res_fx, open(HERE / "test_fixture_reservations.json", "w"), indent=1)
+
+rows = fc.reservation_rows(res_fx["data"], TODAY)
+t = fc.reservation_tables(rows)
+check("live bookings = 4, cancelled = 2 (status OR cancelled_on)", t["bookings"] == 4 and t["cancelled"] == 2, f"{t['bookings']}/{t['cancelled']}")
+check("nights and revenue exclude cancelled", t["nights"] == 15 and t["revenue"] == 4200, f"{t['nights']}/{t['revenue']}")
+check("overall ADR = revenue / nights", t["adr"] == 280.0, str(t["adr"]))
+check("LOS distribution sums to 100", abs(sum(v for v in t["los"].values()) - 100.0) < 0.2, str(t["los"]))
+check("lead-time buckets: one 0-7, one 31-60 x2, one 61+", t["lead"]["d0_7"] == 25.0 and t["lead"]["d31_60"] == 50.0 and t["lead"]["d61p"] == 25.0, str(t["lead"]))
+check("channel mix counts live bookings only", t["channels"] == {"airbnb": 1, "vrbo": 1, "bcom": 1, "manual": 1, "other": 0}, str(t["channels"]))
+check("recent = booked within 14 days of today (2)", len(t["recent"]) == 2, str(len(t["recent"])))
+check("monthly rows by check-in month (2027-02, 2027-03)", [m["month"] for m in t["monthly"]] == ["2027-02", "2027-03"])
+check("guestName is dropped by the row normaliser", not any("guestName" in r or "Jane" in json.dumps(r) for r in rows))
+check("strip_pii removes every PII field", "guestName" not in rr.strip_pii(res_fx["data"][0]))
+
+with tempfile.TemporaryDirectory() as td:
+    env = dict(os.environ, RC_CACHE_DIR=td, PRICELABS_API_KEY="offline-test-key-never-used")
+    os.makedirs(os.path.join(td, "reservations"), exist_ok=True)
+    from datetime import date as _d, timedelta as _td
+    d_from = (_d.fromisoformat(TODAY) - _td(days=730)).isoformat(); d_to = (_d.fromisoformat(TODAY) + _td(days=365)).isoformat()
+    json.dump({"pulled_at": "2027-01-15T00:00:00+00:00", "listing": "fixture-listing", "pms": "smartbnb",
+               "window": [d_from, d_to], "data": [rr.strip_pii(r) for r in res_fx["data"]]},
+              open(os.path.join(td, "reservations", f"res_fixture-_smartbnb_{d_from}_{d_to}.json"), "w"))
+    pr = subprocess.run([sys.executable, str(HERE / "reduce_reservations.py"), "--listing", "fixture-listing",
+                         "--today", TODAY, "--currency", "CAD", "--ttl-days", "36500"], capture_output=True, text=True, env=env)
+check("reservations reducer exits 0 from cache", pr.returncode == 0, pr.stderr[:200])
+check("output never contains a guest name", "Jane" not in pr.stdout and "guest" not in pr.stdout.lower().replace("guest_count", ""))
+rfull = fc.reservation_facts_full(res_fx, TODAY)
+try:
+    rred = fc.reservation_facts_reduced(pr.stdout); rbad = fc.compare(rfull, rred, fc.RESERVATION_FACTS)
+except Exception as e:  # noqa: BLE001
+    rbad = [f"unparseable: {e}"]
+check("all 12 reservation fact classes survive the printed rollup", not rbad, "; ".join(rbad))
+with tempfile.TemporaryDirectory() as td:
+    env = dict(os.environ, RC_CACHE_DIR=td, PRICELABS_API_KEY="offline-test-key-never-used")
+    os.makedirs(os.path.join(td, "reservations"), exist_ok=True)
+    json.dump({"pulled_at": "2027-01-15T00:00:00+00:00", "listing": "fixture-listing", "pms": "smartbnb",
+               "window": [d_from, d_to], "data": [rr.strip_pii(r) for r in res_fx["data"]]},
+              open(os.path.join(td, "reservations", f"res_fixture-_smartbnb_{d_from}_{d_to}.json"), "w"))
+    pr2 = subprocess.run([sys.executable, str(HERE / "reduce_reservations.py"), "--listing", "fixture-listing",
+                          "--today", TODAY, "--currency", "USD", "--ttl-days", "36500"], capture_output=True, text=True, env=env)
+check("currency mismatch -> exit 2, nothing printed", pr2.returncode == 2 and pr2.stdout.strip() == "")
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:

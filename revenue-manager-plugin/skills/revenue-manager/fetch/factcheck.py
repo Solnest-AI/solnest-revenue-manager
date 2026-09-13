@@ -47,6 +47,7 @@ PRECISION = {
     "nb_price": 0, "nb_pct": 0, "count": 0,
     # calendar reconciliation: markup ratio to 3 dp (1.000 = no markup), prices whole
     "ratio": 3, "price": 0,
+    "pct": 1, "days": 1,   # reservations: distribution shares and mean lead/LOS
 }
 
 
@@ -465,10 +466,149 @@ def calendar_facts_reduced(text: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------- PriceLabs reservations
+
+RESERVATION_FACTS = [
+    "bookings", "cancelled", "nights", "revenue", "adr", "currency", "months",
+    "los_digest", "lead_digest", "channel_digest", "monthly_digest", "recent_count",
+]
+RES_MONTHLY_COLUMNS = ["month", "bookings", "nights", "revenue", "adr", "avg_lead", "avg_los", "cancelled",
+                       "airbnb", "vrbo", "bcom", "manual", "other"]
+RES_RECENT_COLUMNS = ["booked", "check_in", "lead_days", "nights", "adr", "channel", "status"]
+LOS_BUCKETS = [("n1", 1, 1), ("n2", 2, 2), ("n3", 3, 3), ("n4_6", 4, 6), ("n7p", 7, 10**6)]
+LEAD_BUCKETS = [("d0_7", 0, 7), ("d8_14", 8, 14), ("d15_30", 15, 30), ("d31_60", 31, 60), ("d61p", 61, 10**6)]
+CHANNELS = ["airbnb", "vrbo", "bcom", "manual"]
+RECENT_DAYS = 14
+
+
+def reservation_rows(raw_rows: list[dict], today: str) -> list[dict]:
+    """Normalise one PriceLabs reservation_data row per booking. Drops PII (guestName).
+    Shared by the reducer (to print) and the harness FULL side (to check)."""
+    from datetime import date as _date
+    out = []
+    for r in raw_rows:
+        try:
+            ci = _date.fromisoformat(str(r["check_in"])[:10])
+            bd = _date.fromisoformat(str(r["booked_date"])[:10]) if r.get("booked_date") else None
+        except ValueError:
+            continue
+        nights = int(r.get("no_of_days") or 0)
+        rev = float(r.get("rental_revenue") or 0)
+        status = str(r.get("booking_status") or "").lower()
+        ch = str(r.get("booking_channel") or "other").lower()
+        out.append({
+            "check_in": ci.isoformat(), "month": ci.isoformat()[:7],
+            "booked": bd.isoformat() if bd else "", "lead_days": (ci - bd).days if bd else None,
+            "nights": nights, "revenue": rev, "adr": _r(rev / nights, "adr") if nights else None,
+            "channel": ch if ch in CHANNELS else "other",
+            "cancelled": status == "cancelled" or bool(r.get("cancelled_on")),
+            "currency": r.get("currency"),
+            # 0 <= delta: a booked_date after "today" is a data anomaly, never "recent"
+            "recent": bool(bd) and 0 <= (_date.fromisoformat(today) - bd).days <= RECENT_DAYS,
+        })
+    return out
+
+
+def _share(items, buckets, key):
+    n = len(items)
+    out = {}
+    for name, lo, hi in buckets:
+        c = sum(1 for i in items if i.get(key) is not None and lo <= i[key] <= hi)
+        out[name] = _r(100.0 * c / n, "pct") if n else None
+    return out
+
+
+def reservation_tables(rows: list[dict]) -> dict:
+    live = [r for r in rows if not r["cancelled"]]
+    nights = sum(r["nights"] for r in live); rev = sum(r["revenue"] for r in live)
+    monthly = {}
+    for r in rows:
+        m = monthly.setdefault(r["month"], {"month": r["month"], "bookings": 0, "nights": 0, "revenue": 0.0,
+                                             "leads": [], "loss": [], "cancelled": 0, **{c: 0 for c in CHANNELS}, "other": 0})
+        if r["cancelled"]:
+            m["cancelled"] += 1; continue
+        m["bookings"] += 1; m["nights"] += r["nights"]; m["revenue"] += r["revenue"]
+        if r["lead_days"] is not None: m["leads"].append(r["lead_days"])
+        m["loss"].append(r["nights"]); m[r["channel"]] += 1
+    monthly_rows = []
+    for m in sorted(monthly.values(), key=lambda x: x["month"]):
+        monthly_rows.append({
+            "month": m["month"], "bookings": m["bookings"], "nights": m["nights"],
+            "revenue": _r(m["revenue"], "revenue"),
+            "adr": _r(m["revenue"] / m["nights"], "adr") if m["nights"] else None,
+            "avg_lead": _r(sum(m["leads"]) / len(m["leads"]), "days") if m["leads"] else None,
+            "avg_los": _r(sum(m["loss"]) / len(m["loss"]), "days") if m["loss"] else None,
+            "cancelled": m["cancelled"], **{c: m[c] for c in CHANNELS}, "other": m["other"],
+        })
+    currencies = sorted({r["currency"] for r in rows if r.get("currency")})
+    return {
+        "bookings": len(live), "cancelled": len(rows) - len(live), "nights": nights,
+        "revenue": _r(rev, "revenue"), "adr": _r(rev / nights, "adr") if nights else None,
+        "currency": currencies[0] if len(currencies) == 1 else ("MIXED:" + ",".join(currencies) if currencies else None),
+        "los": _share(live, LOS_BUCKETS, "nights"), "lead": _share(live, LEAD_BUCKETS, "lead_days"),
+        "channels": {c: sum(1 for r in live if r["channel"] == c) for c in CHANNELS + ["other"]},
+        "monthly": monthly_rows,
+        "recent": sorted([r for r in live if r["recent"]], key=lambda r: (r["booked"], r["check_in"])),
+    }
+
+
+def _res_facts_from(t: dict) -> dict:
+    return {
+        "bookings": t["bookings"], "cancelled": t["cancelled"], "nights": t["nights"],
+        "revenue": t["revenue"], "adr": t["adr"], "currency": t["currency"], "months": len(t["monthly"]),
+        "los_digest": _digest(sorted(t["los"].items())), "lead_digest": _digest(sorted(t["lead"].items())),
+        "channel_digest": _digest(sorted(t["channels"].items())),
+        "monthly_digest": _digest((m["month"], f"{m['nights']}/{m['adr']}/{m['bookings']}") for m in t["monthly"]),
+        "recent_count": len(t["recent"]),
+    }
+
+
+def reservation_facts_full(raw: dict, today: str) -> dict:
+    rows = raw.get("data") if isinstance(raw, dict) else raw
+    return _res_facts_from(reservation_tables(reservation_rows(rows, today)))
+
+
+def reservation_facts_reduced(text: str) -> dict:
+    meta, blocks, cur = {}, {}, None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            cur = line[3:].strip().split()[0]; blocks[cur] = []
+        elif line.startswith("# "):
+            for kv in line[2:].split():
+                if "=" in kv:
+                    k, v = kv.split("=", 1); meta[k] = v
+        elif not line.strip():
+            cur = None
+        elif cur:
+            blocks[cur].append(line)
+    monthly = list(csv.DictReader(io.StringIO("\n".join(blocks.get("monthly", [])))))
+    recent = list(csv.DictReader(io.StringIO("\n".join(blocks.get("recent", [])))))
+    los = {k: _r(meta[k], "pct") for k, _, _ in LOS_BUCKETS if meta.get(k, "none") != "none"}
+    for k, _, _ in LOS_BUCKETS: los.setdefault(k, None)
+    lead = {k: _r(meta[k], "pct") for k, _, _ in LEAD_BUCKETS if meta.get(k, "none") != "none"}
+    for k, _, _ in LEAD_BUCKETS: lead.setdefault(k, None)
+    channels = {}
+    for kv in meta.get("channels", "").split(","):
+        if ":" in kv:
+            c, n = kv.split(":"); channels[c] = int(n)
+    for c in CHANNELS + ["other"]: channels.setdefault(c, 0)
+    return {
+        "bookings": int(meta["bookings"]), "cancelled": int(meta["cancelled"]), "nights": int(meta["nights"]),
+        "revenue": _r(meta["revenue"], "revenue"),
+        "adr": _r(meta["adr"], "adr") if meta.get("adr", "none") != "none" else None,
+        "currency": meta.get("currency") if meta.get("currency") != "none" else None, "months": len(monthly),
+        "los_digest": _digest(sorted(los.items())), "lead_digest": _digest(sorted(lead.items())),
+        "channel_digest": _digest(sorted(channels.items())),
+        "monthly_digest": _digest((m["month"], f"{int(m['nights'])}/{_r(m['adr'], 'adr') if m['adr'] else None}/{int(m['bookings'])}") for m in monthly),
+        "recent_count": len(recent),
+    }
+
+
 SOURCES = {
     "airroi": (AIRROI_FACTS, airroi_facts_full, airroi_facts_reduced),
     "neighborhood": (NEIGHBORHOOD_FACTS, neighborhood_facts_full, neighborhood_facts_reduced),
     "calendar": (CALENDAR_FACTS, calendar_facts_full, calendar_facts_reduced),
+    "reservations": (RESERVATION_FACTS, reservation_facts_full, reservation_facts_reduced),
 }
 
 
@@ -480,6 +620,7 @@ def main() -> int:
     ap.add_argument("--subject-id", default=None)
     ap.add_argument("--category", default=None, help="neighborhood: bedroom category, e.g. 4")
     ap.add_argument("--days", type=int, default=None, help="neighborhood: forward window the reducer used")
+    ap.add_argument("--today", default=None, help="reservations: the 'today' the reducer used (YYYY-MM-DD)")
     args = ap.parse_args()
 
     names, f_full, f_red = SOURCES[args.source]
@@ -492,6 +633,10 @@ def main() -> int:
             if not args.category:
                 raise ValueError("--category is required for neighborhood")
             full = f_full(raw, args.category, args.days)
+        elif args.source == "reservations":
+            if not args.today:
+                raise ValueError("--today is required for reservations")
+            full = f_full(raw, args.today)
         else:
             full = f_full(raw)
         reduced = f_red(open(args.reduced, encoding="utf-8").read())

@@ -138,11 +138,33 @@ def fetch_metrics(listing_id: str, pms: str, key: str) -> dict | None:
     "cut and promote". Also carries mpi (market penetration), revpar vs
     stly_revpar, and booking_pickup vs stly. ~8.7 KB raw, reduced to one line.
     """
-    try:
-        params = f"?listing_id={listing_id}&pms_name={pms}"   # note: pms_name, not pms (pms 400s)
-        data = call("/v1/listing_metrics", key, params=params)
-    except SystemExit:
-        return None
+    # Disk-cached for a day: metrics move daily at most, and a portfolio re-run inside
+    # the window is otherwise one API call per listing for numbers that have not changed.
+    import time as _time
+    from datetime import datetime as _dt
+    from _cache import cache_dir as _cd
+    cpath = os.path.join(_cd("metrics"), f"metrics_{listing_id[:8]}_{pms}.json")
+    data = None
+    if os.path.isfile(cpath):
+        try:
+            b = json.load(open(cpath))
+            if _time.time() - _dt.fromisoformat(b["pulled_at"]).timestamp() <= 86400:
+                data = b["data"]
+        except Exception:  # noqa: BLE001
+            data = None
+    if data is None:
+        try:
+            params = f"?listing_id={listing_id}&pms_name={pms}"   # note: pms_name, not pms (pms 400s)
+            data = call("/v1/listing_metrics", key, params=params)
+        except SystemExit:
+            return None
+        try:
+            from datetime import timezone as _tz
+            tmp = cpath + ".tmp"
+            json.dump({"pulled_at": _dt.now(_tz.utc).isoformat(timespec="seconds"), "data": data}, open(tmp, "w"))
+            os.replace(tmp, cpath)
+        except OSError:
+            pass  # a cache write failure must never fail the run
     node = data
     for step in ("data", "listing_level"):
         if isinstance(node, dict) and step in node:
