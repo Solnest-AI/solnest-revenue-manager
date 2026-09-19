@@ -459,20 +459,25 @@ check("A3: far-out value 9999 and start -50 are rejected when the type is missin
                                        "far_out_premium_start": -50}}),
       "a missing type used to skip range checks entirely, not just the type check")
 
-# A3/design correctness: a market-driven type is a legitimate, real PriceLabs value (see
-# attribution.MARKET_DRIVEN) and must NOT be flagged as "unknown" just because it carries
-# no numeric field to range-check. Written to guard the else-branch added for A3 from
-# becoming a new false positive.
+# A3/design correctness: a market-driven type is a legitimate, real PriceLabs value and
+# must NOT be flagged as "unknown" just because it carries no numeric field to
+# range-check. Written to guard the else-branch added for A3 from becoming a new false
+# positive. Toggle included so the assertion isolates the type check (fix round 3: a
+# bare type with no toggle now also trips the F4 toggle-required check, which is a
+# different failure mode than what these two tests exist to guard).
 check("a market-driven far_out_premium_type ('recommended') is not flagged as unknown",
-      not cw.validate({"far_out_premium": {"far_out_premium_type": "recommended"}}),
-      f"got {cw.validate({'far_out_premium': {'far_out_premium_type': 'recommended'}})}")
+      not cw.validate({"far_out_premium": {"far_out_premium_on": True,
+                                           "far_out_premium_type": "recommended"}}),
+      f"got {cw.validate({'far_out_premium': {'far_out_premium_on': True, 'far_out_premium_type': 'recommended'}})}")
 check("a market-driven last_min_factor_type ('conservative') is not flagged as unknown",
-      not cw.validate({"last_minute_prices": {"last_min_factor_type": "conservative"}}))
+      not cw.validate({"last_minute_prices": {"last_min_factor_on": True,
+                                              "last_min_factor_type": "conservative"}}))
 
 # a genuinely unrecognized type (not the enum trap, not market-driven, not a real type)
 # must still be caught -- this is what A3's else branch is actually for
 check("a genuinely unknown far_out_premium_type is rejected",
-      cw.validate({"far_out_premium": {"far_out_premium_type": "moonbeam",
+      cw.validate({"far_out_premium": {"far_out_premium_on": True,
+                                       "far_out_premium_type": "moonbeam",
                                        "far_out_premium_value": 5}}),
       "the else branch added for A3 must still fire on real garbage")
 
@@ -629,35 +634,43 @@ check("D3: merge_dow raises on an unrecognized key in changes rather than droppi
 # given). All ground truth below is read directly from
 # references/pricelabs-api/customizations.md, not paraphrased.
 
-# Axis 1: the 0-through-7 day sweep, explicit, both with and without the toggle restated.
-# Independently re-verified against the shipped module before this fix (see the fix
-# report): validate({"day_of_week_adjustment": {"dow_factor_on": True}}) returned [],
-# reproducing the coordinator's exact claim.
-for _n in range(8):
-    _cfg_on = {cw.DOW_KEYS[i]: -10.0 for i in range(_n)}
-    _cfg_on["dow_factor_on"] = True
-    _result_on = cw.validate({"day_of_week_adjustment": _cfg_on})
-    if _n == 7:
-        check(f"day sweep: {_n} days + toggle True is a complete write, not flagged",
-              not _result_on, f"got {_result_on}")
-    else:
-        check(f"day sweep: {_n} days + toggle True is caught as incomplete "
-              "(THE HOLE: 0 days used to be silent)",
-              _result_on, f"{_n} days with the toggle restated must never return []")
-
-    _cfg_off = {cw.DOW_KEYS[i]: -10.0 for i in range(_n)}
-    _result_off = cw.validate({"day_of_week_adjustment": _cfg_off})
-    if _n == 0:
-        check("day sweep: 0 days, no toggle key at all, is a legitimate no-op "
-              "(not touching this rule) and must not be flagged",
-              not _result_off, f"got {_result_off}")
-    elif _n == 7:
-        check("day sweep: 7 days, no toggle key, is a complete write, not flagged",
-              not _result_off, f"got {_result_off}")
-    else:
-        check(f"day sweep: {_n} days, no toggle key, is still caught as incomplete "
-              "(presence alone must keep working, regardless of the toggle fix)",
-              _result_off, f"{_n} days must never return []")
+# Axis 1 (fix round 3, F4, supersedes round 2's version): {toggle absent, True,
+# False} x {day count 0-7}, 24 cells, expected outcome DERIVED from ground truth, not
+# hardcoded per cell -- this is the "loop over toggle x type x field-subset" shape the
+# round-3 review asked for, applied to day-of-week.
+#
+# Round 2's version of this sweep asserted "0/7 days with NO toggle key is clean" --
+# that was wrong: references/pricelabs-api/customizations.md's POST body tables mark
+# dow_factor_on `req = Y` (a required body field), so an absent toggle is a malformed
+# request regardless of how many days are present. Independently reproduced against
+# the shipped module before this fix: it returned [] for both 0 and 7 days with no
+# toggle key, confirming the round-2 test's claim was false and has been corrected.
+#
+# The remaining logic is unchanged from round 2: toggle True + <7 days is caught
+# (0 days is THE CRITICAL hole that fix closed); toggle False + 0 days is clean (F4's
+# OTHER half -- day-of-week keeps its stored values on toggle-off, so "just turn it
+# off" with nothing else restated is legitimate, and this is the cell that locks in
+# truthiness over presence for cfg.get("dow_factor_on") inside the completeness check).
+for _toggle in (None, True, False):     # None = dow_factor_on key absent entirely
+    for _n in range(8):
+        _cfg = {cw.DOW_KEYS[i]: -10.0 for i in range(_n)}
+        if _toggle is not None:
+            _cfg["dow_factor_on"] = _toggle
+        _result = cw.validate({"day_of_week_adjustment": _cfg})
+        if _toggle is None:
+            _expect_clean = False                  # F4: toggle is a required field
+        elif _n == 7:
+            _expect_clean = True                    # a complete write, any toggle value
+        elif _n == 0:
+            _expect_clean = not _toggle              # off+0 days legit; on+0 days is the hole
+        else:
+            _expect_clean = False                   # 1-6 days always caught, any toggle
+        _label = (f"day sweep: toggle={_toggle!r} days={_n} -> expect "
+                 f"{'clean' if _expect_clean else 'caught'}")
+        if _expect_clean:
+            check(_label, not _result, f"got {_result}")
+        else:
+            check(_label, _result, f"must be caught, got {_result}")
 
 # Axis 2: one test per omitted-required-field shape from the coordinator's table, all
 # ground-truthed against references/pricelabs-api/customizations.md's own "Required
@@ -714,17 +727,209 @@ check("a valid `fix` far-out payload with NO step (step is not required for fix)
 check("a full valid seven-day write still returns []",
       not cw.validate({"day_of_week_adjustment": dict(
           RULES["day_of_week_adjustment"], dow_factor_value_mon=-10.0)}))
-for _spelling in ("none", "recommended", "conservative", "aggressive",
-                  "moderately_conservative", "moderately_aggressive"):
-    check(f"last-minute market-driven type {_spelling!r} still returns [] "
-          "(no value/dfd required for these)",
+# F5 (fix round 3) corrects this loop: attribution.MARKET_DRIVEN is a superset across
+# all four type fields -- moderately_conservative/moderately_aggressive are real
+# values on seasonality and demand_factor ONLY, per docs/pricelabs/customer-api.json's
+# resolved enums. The six-spelling loop that USED to run here asserted both were also
+# valid for last_min_factor_type and far_out_premium_type; independently reproduced
+# against the shipped module before this fix -- they validated clean, which PriceLabs
+# would have rejected outright (all-or-nothing write). Split by field below, checked
+# against the authoritative per-field constant, not the shared superset.
+for _spelling in cw.LAST_MIN_FACTOR_TYPES - {"linear", "linear_gradual", "fixed"}:
+    check(f"last-minute type {_spelling!r} (LAST_MIN_FACTOR_TYPES, non-concrete) "
+          "still returns [] (no value/dfd required for these)",
           not cw.validate({"last_minute_prices": {"last_min_factor_on": True,
                                                    "last_min_factor_type": _spelling}}),
           f"got {cw.validate({'last_minute_prices': {'last_min_factor_on': True, 'last_min_factor_type': _spelling}})}")
-    check(f"far-out market-driven type {_spelling!r} still returns [] "
-          "(no value/start/step required for these)",
+for _spelling in cw.FAR_OUT_PREMIUM_TYPES - {"linear", "fix"}:
+    check(f"far-out type {_spelling!r} (FAR_OUT_PREMIUM_TYPES, non-concrete) "
+          "still returns [] (no value/start/step required for these)",
           not cw.validate({"far_out_premium": {"far_out_premium_on": True,
                                                "far_out_premium_type": _spelling}}))
+# the direct regression guard: these two spellings are real PriceLabs values, but only
+# on seasonality/demand_factor (exercised further down) -- last-minute and far-out
+# must REJECT them, which is exactly what round 2's tests got backwards.
+for _spelling in ("moderately_conservative", "moderately_aggressive"):
+    check(f"last-minute REJECTS {_spelling!r} (valid on seasonality/demand_factor "
+          "only, not here -- round 2 wrongly asserted otherwise)",
+          cw.validate({"last_minute_prices": {"last_min_factor_on": True,
+                                              "last_min_factor_type": _spelling}}))
+    check(f"far-out REJECTS {_spelling!r} (valid on seasonality/demand_factor only, "
+          "not here -- round 2 wrongly asserted otherwise)",
+          cw.validate({"far_out_premium": {"far_out_premium_on": True,
+                                           "far_out_premium_type": _spelling}}))
+
+# --- customization_write: fix round 3 (coordinator review) ------------------------
+# F5's authoritative enums come from docs/pricelabs/customer-api.json (resolving
+# CapiLastMinutePricesLastMinFactorType, CapiFarOutPremiumFarOutPremiumType,
+# CapiSeasonalitySeasonalityType, CapiDemandFactorToneDemandFactor). F1/F2's
+# toggle-off-resets claim comes from references/pricelabs-gotchas.md. F4's
+# every-toggle-is-required claim comes from references/pricelabs-api/
+# customizations.md's own POST body tables. All independently re-read and confirmed
+# before writing any fix; see the fix report for the primary-source quotes.
+
+# F1: re-enabling last-minute/far-out with ONLY the toggle restated (no type) is the
+# same hole as day-of-week's zero-days case (fixed in round 2), and just as dangerous:
+# toggling either off resets its stored config to a zeroed state (last-minute to type
+# linear/value 0; far-out to value 0/start 999), so re-enabling with the toggle alone
+# leaves that live. Independently reproduced against the shipped (pre-round-3) module
+# before this fix -- both returned [].
+check("F1: last_minute_prices toggle True alone (no type/value/dfd) is caught",
+      cw.validate({"last_minute_prices": {"last_min_factor_on": True}}),
+      "re-enabling with only the toggle leaves a live 0% rule (toggle-off resets to "
+      "type linear, value 0)")
+check("F1: far_out_premium toggle True alone (no type/value/start/step) is caught",
+      cw.validate({"far_out_premium": {"far_out_premium_on": True}}),
+      "toggle-off resets far-out to value 0 / start 999; re-enabling with only the "
+      "toggle leaves that live")
+
+# F2: toggling last-minute/far-out OFF is a LEGAL write that DESTROYS the stored
+# configuration and returns HTTP 200 -- validate() correctly does not (cannot) block
+# it, since it is not invalid, but it must not be silent either. Lives in its own
+# channel so validate()'s list[str]/empty-means-safe contract is unchanged for Task 7.
+check("F2: validate() does not (and should not) block a toggle-off write -- it is "
+      "legal, not invalid",
+      not cw.validate({"last_minute_prices": {"last_min_factor_on": False}}))
+check("F2: destructive_warnings() catches the last-minute toggle-off that validate() "
+      "correctly lets through",
+      cw.destructive_warnings({"last_minute_prices": {"last_min_factor_on": False}}),
+      "a legal write that resets stored config must not be silent")
+check("F2: destructive_warnings() catches the far-out toggle-off too",
+      cw.destructive_warnings({"far_out_premium": {"far_out_premium_on": False}}))
+check("F2: destructive_warnings() is silent for day-of-week toggle-off "
+      "(it keeps its stored values, not destructive)",
+      not cw.destructive_warnings({"day_of_week_adjustment": {"dow_factor_on": False}}))
+check("F2: destructive_warnings() is silent for seasonality toggle-off "
+      "(it keeps its stored values too)",
+      not cw.destructive_warnings({"seasonality": {"seasonality_customization_on": False}}))
+check("F2: destructive_warnings() is silent when the toggle is True (not a toggle-off)",
+      not cw.destructive_warnings({"last_minute_prices": {"last_min_factor_on": True}}))
+check("F2: destructive_warnings() is silent when the rule is not present at all",
+      not cw.destructive_warnings({}))
+check("F2: validate()'s contract is unchanged by adding destructive_warnings() -- "
+      "still list[str], still empty on a clean payload",
+      cw.validate({"day_of_week_adjustment": dict(
+          RULES["day_of_week_adjustment"], dow_factor_value_mon=-10.0)}) == [])
+
+# F4, explicit named lock-in (beyond the day-sweep loop above, which covers this cell
+# implicitly at toggle=False/days=0): truthiness, not presence, is the correct gate
+# for the day-of-week toggle inside the COMPLETENESS check specifically.
+# {"dow_factor_on": False} with zero days is a legitimate, minimal "just turn it off"
+# write -- day-of-week keeps its stored per-day values on toggle-off, unlike
+# last-minute/far-out (see F2 above). A future "tightening" of
+# cfg.get("dow_factor_on") to "dow_factor_on" in cfg would break this exact legal
+# write with a fully green suite otherwise; this module has shipped that class of bug
+# twice already (rounds 1 and 2).
+check("F4: an explicit dow_factor_on=False with zero days is a legitimate toggle-off, "
+      "not flagged as incomplete",
+      not cw.validate({"day_of_week_adjustment": {"dow_factor_on": False}}),
+      f"got {cw.validate({'day_of_week_adjustment': {'dow_factor_on': False}})}")
+
+# F4: every rule's own toggle is a required body field -- confirmed generically
+# across all six rules (including custom_seasonal_profile, which has no other
+# validation in this module -- see the module docstring for why that is out of
+# scope), not just day-of-week.
+for _rule, _toggle_key in cw.TOGGLE_KEY.items():
+    check(f"{_rule}: an empty payload is rejected for missing {_toggle_key} "
+          "(every *_on field is `req = Y` per the POST body tables)",
+          cw.validate({_rule: {}}),
+          f"an empty {_rule} object is missing its required toggle")
+
+# F3: seasonality and demand_factor previously had no rule-specific validation at all
+# (only the generic FEATURE_GATED scan). Both now get: toggle-required (F4, tested
+# generically above), type-required-when-touched (the same "touched" shape as the
+# other three rules), and enum validation against their OWN authoritative set --
+# which is also where moderately_conservative/moderately_aggressive actually ARE
+# valid (contrast with the last-minute/far-out REJECTS tests above).
+check("F3: seasonality with a bogus seasonality_type is rejected",
+      cw.validate({"seasonality": {"seasonality_customization_on": True,
+                                   "seasonality_type": "zzz"}}),
+      "a bogus type used to validate clean and would kill the whole request at the API")
+check("F3: seasonality toggle True alone (no type restated) is rejected",
+      cw.validate({"seasonality": {"seasonality_customization_on": True}}),
+      "re-enabling with no type restated must not silently pass")
+for _spelling in cw.SEASONALITY_TYPES:
+    check(f"F3/F5: seasonality accepts {_spelling!r} (the full authoritative enum, "
+          "incl. moderately_conservative/moderately_aggressive)",
+          not cw.validate({"seasonality": {"seasonality_customization_on": True,
+                                           "seasonality_type": _spelling}}),
+          f"got {cw.validate({'seasonality': {'seasonality_customization_on': True, 'seasonality_type': _spelling}})}")
+
+check("F3: demand_factor with a bogus tone_demand_factor is rejected",
+      cw.validate({"demand_factor": {"tone_demand_factor_on": True,
+                                     "tone_demand_factor": "zzz"}}))
+check("F3: demand_factor toggle True alone (no type restated) is rejected",
+      cw.validate({"demand_factor": {"tone_demand_factor_on": True}}))
+for _spelling in cw.TONE_DEMAND_FACTOR_TYPES:
+    check(f"F3/F5: demand_factor accepts {_spelling!r} (the full authoritative enum, "
+          "incl. the space-separated 'no demand factor')",
+          not cw.validate({"demand_factor": {"tone_demand_factor_on": True,
+                                             "tone_demand_factor": _spelling}}),
+          f"got {cw.validate({'demand_factor': {'tone_demand_factor_on': True, 'tone_demand_factor': _spelling}})}")
+
+# Generalized test axis (the reviewer's explicit ask): a loop over {toggle absent,
+# True, False} x {each concrete type} x {required fields present, partially present,
+# absent}. This is what would have caught rounds 1 and 2 before the coordinator did.
+# Closes two named coverage gaps directly: linear_gradual had zero missing-field
+# coverage (it is one of the three concrete types iterated below), and far-out
+# `linear` with value+start but no step -- the likeliest real operator slip, copying
+# a `fix` config to `linear` -- is the "no_step" subset below.
+_LAST_MIN_CONCRETE = ("linear", "linear_gradual", "fixed")
+_LAST_MIN_FIELD_SUBSETS = {
+    "both": {"last_min_factor_value": -10.0, "last_min_factor_dfd": 14},
+    "value_only": {"last_min_factor_value": -10.0},
+    "dfd_only": {"last_min_factor_dfd": 14},
+    "neither": {},
+}
+for _toggle in (None, True, False):
+    for _kind in _LAST_MIN_CONCRETE:
+        for _subset_name, _fields in _LAST_MIN_FIELD_SUBSETS.items():
+            _cfg = dict(_fields, last_min_factor_type=_kind)
+            if _toggle is not None:
+                _cfg["last_min_factor_on"] = _toggle
+            _result = cw.validate({"last_minute_prices": _cfg})
+            _expect_clean = _subset_name == "both" and _toggle is not None
+            _label = (f"last-minute sweep: toggle={_toggle!r} type={_kind} "
+                     f"fields={_subset_name} -> expect "
+                     f"{'clean' if _expect_clean else 'caught'}")
+            if _expect_clean:
+                check(_label, not _result, f"got {_result}")
+            else:
+                check(_label, _result, f"must be caught, got {_result}")
+
+_FAR_OUT_FIELD_SUBSETS = {
+    "linear": {
+        "all": {"far_out_premium_value": 25, "far_out_premium_start": 180,
+                "far_out_premium_step": 1},
+        "no_value": {"far_out_premium_start": 180, "far_out_premium_step": 1},
+        "no_start": {"far_out_premium_value": 25, "far_out_premium_step": 1},
+        "no_step": {"far_out_premium_value": 25, "far_out_premium_start": 180},
+        "none": {},
+    },
+    "fix": {
+        # step is not required for fix ("ignored for fix, always 1"), so "all" here
+        # has only value+start -- deliberately different from linear's "all".
+        "all": {"far_out_premium_value": 25, "far_out_premium_start": 180},
+        "no_value": {"far_out_premium_start": 180},
+        "no_start": {"far_out_premium_value": 25},
+        "none": {},
+    },
+}
+for _toggle in (None, True, False):
+    for _kind, _subsets in _FAR_OUT_FIELD_SUBSETS.items():
+        for _subset_name, _fields in _subsets.items():
+            _cfg = dict(_fields, far_out_premium_type=_kind)
+            if _toggle is not None:
+                _cfg["far_out_premium_on"] = _toggle
+            _result = cw.validate({"far_out_premium": _cfg})
+            _expect_clean = _subset_name == "all" and _toggle is not None
+            _label = (f"far-out sweep: toggle={_toggle!r} type={_kind} "
+                     f"fields={_subset_name} -> expect "
+                     f"{'clean' if _expect_clean else 'caught'}")
+            if _expect_clean:
+                check(_label, not _result, f"got {_result}")
+            else:
+                check(_label, _result, f"must be caught, got {_result}")
 
 # --- summary ----------------------------------------------------------------
 print()

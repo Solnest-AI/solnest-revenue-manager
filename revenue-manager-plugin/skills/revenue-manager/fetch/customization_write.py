@@ -14,7 +14,20 @@ Every function here is a guard against a measured failure that returns HTTP 200:
                       Presence is the wrong gate for a COMPLETENESS check, though --
                       "only check what's given" and "flag what's missing" are different
                       questions, and conflating them in round 1 silently turned six
-                      required-field omissions into a pass (fix round 2)
+                      required-field omissions into a pass (fix round 2). Every rule's
+                      own toggle is itself a required field, checked independent of
+                      what else the payload states; last_minute_prices/far_out_premium
+                      count re-enabling with the toggle alone as incomplete too, the
+                      same shape as day-of-week; seasonality/demand_factor now get real
+                      validation instead of none; and all four type enums are checked
+                      against their OWN authoritative set, not a shared superset that
+                      happened to accept values three of the four fields reject
+                      (fix round 3, F1/F3/F4/F5)
+  destructive_warnings unlike validate(), these are LEGAL writes PriceLabs accepts --
+                      toggling last_minute_prices or far_out_premium off resets their
+                      stored config rather than preserving it, so the operator loses
+                      the prior setting with an HTTP 200 and no error to catch it
+                      (fix round 3, F2)
   snapshot_payload    the rollback. The exact object needed to re-POST the prior state.
                       Deep-copies `current` so a later mutation of the caller's dict can
                       never reach back into an already-taken snapshot (fix round 1, C1)
@@ -56,7 +69,7 @@ from datetime import datetime, timezone
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from attribution import DOW_KEYS, MARKET_DRIVEN, to_setting  # noqa: E402
+from attribution import DOW_KEYS, to_setting  # noqa: E402
 from _cache import cache_dir  # noqa: E402
 
 VALID_RULES = {"seasonality", "last_minute_prices", "far_out_premium",
@@ -76,6 +89,39 @@ RANGES = {
 # with ERR-FEATURE-NOT-ENABLED, so they are refused locally rather than at the API.
 FEATURE_GATED = {"hotel_compset_type", "hotel_wt", "non_repeating_seasons",
                  "price_type_non_repeating"}
+
+# Fix round 3 (F5): the authoritative per-field enums, read directly from the vendor's
+# OpenAPI spec at docs/pricelabs/customer-api.json (resolving
+# CapiLastMinutePricesLastMinFactorType, CapiFarOutPremiumFarOutPremiumType,
+# CapiSeasonalitySeasonalityType, CapiDemandFactorToneDemandFactor). NOT
+# attribution.MARKET_DRIVEN: that set is a superset across all four fields, and
+# moderately_conservative/moderately_aggressive exist ONLY on seasonality and demand
+# factor -- validate() briefly accepted them on last_min_factor_type and
+# far_out_premium_type too (round 2 tests asserted it as fact; it was not), which
+# PriceLabs would have rejected outright, killing the whole all-or-nothing write.
+LAST_MIN_FACTOR_TYPES = {"none", "recommended", "conservative", "aggressive",
+                         "linear", "linear_gradual", "fixed"}
+FAR_OUT_PREMIUM_TYPES = {"none", "recommended", "conservative", "aggressive",
+                         "linear", "fix"}
+SEASONALITY_TYPES = {"no_seasonality", "conservative", "moderately_conservative",
+                     "recommended", "moderately_aggressive", "aggressive"}
+TONE_DEMAND_FACTOR_TYPES = {"conservative", "moderately_conservative", "recommended",
+                            "moderately_aggressive", "aggressive", "no demand factor"}
+
+# Fix round 3 (F4): every one of these toggles is marked `req = Y` in the POST body
+# tables of references/pricelabs-api/customizations.md -- a rule object sent without
+# its own toggle is a malformed request, not merely an incomplete one. Same map as
+# reduce_customizations.TOGGLE_KEY; kept as its own copy rather than imported, so this
+# write-side safety module has no dependency on a read-side reporting module -- matches
+# how RANGES/VALID_RULES/FEATURE_GATED are already self-contained constants here.
+TOGGLE_KEY = {
+    "seasonality": "seasonality_customization_on",
+    "last_minute_prices": "last_min_factor_on",
+    "far_out_premium": "far_out_premium_on",
+    "day_of_week_adjustment": "dow_factor_on",
+    "demand_factor": "tone_demand_factor_on",
+    "custom_seasonal_profile": "custom_seasonal_profile_on",
+}
 
 # Runtime cache, outside the plugin tree (see _cache.py) so `claude plugin update` never
 # duplicates it. Kept in its OWN subfolder rather than reduce_customizations.CACHE_DIR:
@@ -141,6 +187,42 @@ def validate(customizations: dict) -> list[str]:
     restated the days/fields they were actually changing (the normal, minimal case) got
     zero validation, because the toggle key itself is exactly the field they had no
     reason to resend.
+
+    Fix round 2: presence is the wrong gate for a COMPLETENESS check, though --
+    "only check what's given" and "flag what's missing" are different questions.
+
+    Fix round 3, the same family of bug in three more places:
+      - F1: re-enabling last_minute_prices or far_out_premium with ONLY the toggle
+        restated (no type) is the exact shape of day-of-week's zero-days hole, and just
+        as dangerous -- references/pricelabs-gotchas.md: toggling either OFF resets
+        their stored config to a zeroed state (last-minute to type linear/value 0,
+        far-out to value 0/start 999), so re-enabling needs the full configuration
+        again, not just the toggle. `touched` now includes the toggle for both.
+      - F3/F5: seasonality and demand_factor previously had no rule-specific
+        validation at all (only the FEATURE_GATED scan below), and last_minute_prices/
+        far_out_premium validated their type against attribution.MARKET_DRIVEN, which
+        is a SUPERSET across all four type fields --
+        moderately_conservative/moderately_aggressive are real values on seasonality
+        and demand_factor ONLY, not on last-minute or far-out (round 2's own tests
+        asserted otherwise; they were wrong). All four now check their own
+        authoritative enum: LAST_MIN_FACTOR_TYPES / FAR_OUT_PREMIUM_TYPES /
+        SEASONALITY_TYPES / TONE_DEMAND_FACTOR_TYPES.
+      - F4: every rule's own toggle is a required body field (TOGGLE_KEY, checked
+        first, below), independent of anything else in the payload. Day-of-week's
+        completeness check uses toggle TRUTHINESS (`cfg.get(...)`), not presence
+        (`... in cfg`), on purpose: `{"dow_factor_on": False}` with zero days is a
+        legitimate, minimal "just turn it off" write, because day-of-week keeps its
+        stored per-day values on toggle-off (last-minute/far-out do NOT -- they reset
+        destructively; see destructive_warnings()). Presence-based would wrongly flag
+        that legitimate write as incomplete with a fully green suite -- this exact
+        module has already shipped that class of bug twice. Do not "simplify" this to
+        `in cfg` without re-reading this paragraph; the locking test is in Axis 1 of
+        the fix-round-3 test block.
+
+    custom_seasonal_profile gets only the toggle-required and FEATURE_GATED checks
+    below. Its own required-field/type rules (price_type required when seasons is
+    non-empty, etc.) are a separate, larger piece of work, out of scope for this round
+    -- not silently forgotten; see the fix report.
     """
     errors: list[str] = []
     for rule, cfg in customizations.items():
@@ -152,16 +234,21 @@ def validate(customizations: dict) -> list[str]:
             if field in FEATURE_GATED:
                 errors.append(f"{rule}.{field}: feature-gated, rejects the whole request")
 
+        # F4: every rule's toggle is `req = Y` on the wire. Checked once, here, for
+        # every rule that appears in the payload at all -- independent of the
+        # rule-specific branches below, which is why this can be a flat presence check
+        # (unlike the day-of-week completeness check below, which needs truthiness).
+        toggle_key = TOGGLE_KEY.get(rule)
+        if toggle_key and toggle_key not in cfg:
+            errors.append(f"{rule}: {toggle_key} is required on every write that "
+                          "includes this rule")
+
         if rule == "day_of_week_adjustment":
             present = [k for k in DOW_KEYS if k in cfg]
-            # A1 (fix round 1) made completeness run on presence instead of the toggle,
-            # which introduced its own hole (fix round 2): an EMPTY `present` with the
-            # toggle on short-circuited past the check entirely, so
-            # {"dow_factor_on": True} alone -- re-enabling a rule with zero days
-            # restated -- validated clean. PriceLabs defaults every omitted day to 0, so
-            # this would wipe a live Fri/Sat premium. `present` alone still catches 1-6
-            # days regardless of the toggle; the `or cfg.get(...)` term is what catches
-            # the zero-days-plus-toggle-on case specifically.
+            # `present` alone still catches 1-6 days regardless of the toggle
+            # (unchanged since round 1). The `or cfg.get("dow_factor_on")` term is
+            # what catches zero-days-plus-toggle-on specifically (round 2's CRITICAL
+            # fix) -- see the docstring above for why this is truthiness, not presence.
             if (present or cfg.get("dow_factor_on")) and len(present) != 7:
                 errors.append("day_of_week_adjustment: all seven days must be sent; "
                               f"got {len(present)}. Omitted days reset to 0")
@@ -180,26 +267,24 @@ def validate(customizations: dict) -> list[str]:
 
         elif rule == "last_minute_prices":
             kind = cfg.get("last_min_factor_type")
+            # F1: the toggle counts as "touched" too now -- see the docstring above.
             touched = (kind is not None or "last_min_factor_value" in cfg
-                      or "last_min_factor_dfd" in cfg)
+                      or "last_min_factor_dfd" in cfg or cfg.get("last_min_factor_on"))
             if touched:
                 if kind == "fix":
-                    # A4: the mirror of the far_out_premium enum trap below. Far-out
-                    # uses `fix`, last-minute uses `fixed` -- they are NOT interchangeable
-                    # and PriceLabs rejects the whole request on the wrong one.
+                    # the mirror of the far_out_premium enum trap below. Far-out uses
+                    # `fix`, last-minute uses `fixed` -- not interchangeable, and
+                    # PriceLabs rejects the whole request on the wrong one.
                     errors.append("last_minute_prices: the enum is `fixed`, not `fix` "
                                   "(far_out_premium uses `fix`; they differ)")
-                elif kind in MARKET_DRIVEN or kind == "none":
-                    pass  # no readable numeric value to range-check for these types
+                elif kind is None:
+                    errors.append("last_minute_prices: last_min_factor_type is "
+                                  "required when the rule is touched (toggle on, or "
+                                  "last_min_factor_value/_dfd present)")
                 elif kind in ("linear", "linear_gradual", "fixed"):
-                    # Fix round 2: both fields are "Required for linear/linear_gradual/
-                    # fixed" per references/pricelabs-api/customizations.md, independent
-                    # of the toggle -- round 1 removed the toggle gate from
-                    # last_min_factor_value's required-check (good) but left it gated on
-                    # `last_min_factor_on` for the ELSE branch (the exact anti-pattern A2
-                    # existed to remove, left in one spot) and never added a required-
-                    # check for last_min_factor_dfd at all, only a presence-gated range
-                    # check. Both are now required-if-absent, independent of the toggle.
+                    # Both fields are "Required for linear/linear_gradual/fixed" per
+                    # references/pricelabs-api/customizations.md, independent of the
+                    # toggle.
                     if "last_min_factor_value" not in cfg:
                         errors.append("last_minute_prices: last_min_factor_value is "
                                       f"required for type {kind}")
@@ -219,37 +304,30 @@ def validate(customizations: dict) -> list[str]:
                     else:
                         _in_range(cfg.get("last_min_factor_dfd"), RANGES["last_min_dfd"],
                                   "last_minute_prices.last_min_factor_dfd", errors)
-                elif kind is None:
-                    # A3: a missing type used to silently skip every check, including
-                    # the range checks on value/dfd that ARE present.
-                    errors.append("last_minute_prices: last_min_factor_type is required "
-                                  "when last_min_factor_value or last_min_factor_dfd "
-                                  "is present")
-                else:
-                    # A3: an unrecognized type used to silently skip every check too.
+                elif kind not in LAST_MIN_FACTOR_TYPES:
                     errors.append("last_minute_prices: unknown last_min_factor_type "
                                   f"{kind!r}")
+                # else: kind is a valid non-concrete type (none/recommended/
+                # conservative/aggressive) -- no numeric companion fields to check.
 
         elif rule == "far_out_premium":
             kind = cfg.get("far_out_premium_type")
+            # F1: the toggle counts as "touched" too now -- see the docstring above.
             touched = (kind is not None or "far_out_premium_value" in cfg
-                      or "far_out_premium_start" in cfg or "far_out_premium_step" in cfg)
+                      or "far_out_premium_start" in cfg or "far_out_premium_step" in cfg
+                      or cfg.get("far_out_premium_on"))
             if touched:
                 if kind == "fixed":
                     errors.append("far_out_premium: the enum is `fix`, not `fixed` "
                                   "(last_minute_prices uses `fixed`; they differ)")
-                elif kind in MARKET_DRIVEN or kind == "none":
-                    pass  # no readable numeric value to range-check for these types
+                elif kind is None:
+                    errors.append("far_out_premium: far_out_premium_type is required "
+                                  "when the rule is touched (toggle on, or "
+                                  "_value/_start/_step present)")
                 elif kind in ("linear", "fix"):
-                    # Fix round 2: value and start are "Required for linear/fix"; step
-                    # is "Required for linear; ignored for fix" per
-                    # references/pricelabs-api/customizations.md. Round 1's presence-
-                    # gated range checks (`if field in cfg: range-check it`) never had a
-                    # companion "else: required" branch, so all three fields silently
-                    # passed validation when omitted -- the presence gate is right for a
-                    # range check (only check what's given) but wrong for a completeness
-                    # check (the whole point is catching what's NOT given). Both gates
-                    # are needed together, not one substituted for the other.
+                    # value and start are "Required for linear/fix"; step is
+                    # "Required for linear; ignored for fix" per
+                    # references/pricelabs-api/customizations.md.
                     if "far_out_premium_value" not in cfg:
                         errors.append("far_out_premium: far_out_premium_value is "
                                       f"required for type {kind}")
@@ -269,16 +347,69 @@ def validate(customizations: dict) -> list[str]:
                         else:
                             _in_range(cfg.get("far_out_premium_step"), RANGES["far_out_step"],
                                       "far_out_premium.far_out_premium_step", errors)
-                elif kind is None:
-                    # A3: a missing type used to silently skip every check -- this is
-                    # the exact case that let value=9999/start=-50 through.
-                    errors.append("far_out_premium: far_out_premium_type is required "
-                                  "when far_out_premium_value, _start or _step is present")
-                else:
-                    # A3: an unrecognized type used to silently skip every check too.
+                elif kind not in FAR_OUT_PREMIUM_TYPES:
                     errors.append("far_out_premium: unknown far_out_premium_type "
                                   f"{kind!r}")
+                # else: kind is a valid non-concrete type (none/recommended/
+                # conservative/aggressive) -- no numeric companion fields to check.
+
+        elif rule == "seasonality":
+            # F3: previously only the FEATURE_GATED scan above ran on this rule -- no
+            # enum check, no required-type check, despite the spec marking
+            # seasonality_type "Required when the toggle is on". A bogus type
+            # validated clean and would have killed the whole request at the API.
+            kind = cfg.get("seasonality_type")
+            touched = kind is not None or cfg.get("seasonality_customization_on")
+            if touched:
+                if kind is None:
+                    errors.append("seasonality: seasonality_type is required when "
+                                  "the rule is touched (toggle on, or the type given)")
+                elif kind not in SEASONALITY_TYPES:
+                    errors.append(f"seasonality: unknown seasonality_type {kind!r}")
+
+        elif rule == "demand_factor":
+            # F3, same shape as seasonality. hotel_compset_type/hotel_wt are
+            # feature-gated fields with their own enums (already covered by the
+            # FEATURE_GATED scan above when the account lacks the feature); their
+            # positive-case validation is out of scope for this round.
+            kind = cfg.get("tone_demand_factor")
+            touched = kind is not None or cfg.get("tone_demand_factor_on")
+            if touched:
+                if kind is None:
+                    errors.append("demand_factor: tone_demand_factor is required "
+                                  "when the rule is touched (toggle on, or the type "
+                                  "given)")
+                elif kind not in TONE_DEMAND_FACTOR_TYPES:
+                    errors.append(f"demand_factor: unknown tone_demand_factor {kind!r}")
     return errors
+
+
+def destructive_warnings(customizations: dict) -> list[str]:
+    """Return non-blocking warnings for LEGAL writes that destroy stored state.
+
+    Fix round 3, F2. Separate from validate() on purpose: validate()'s contract
+    (list[str], empty means safe to send) is depended on by Task 7 and does not change
+    here. A destructive-but-legal write is not something validate() can refuse --
+    PriceLabs accepts it and returns 200 -- but it must not pass through silently
+    either, so it gets its own channel instead of a new return shape on validate().
+
+    Per references/pricelabs-gotchas.md: toggling last_minute_prices or
+    far_out_premium OFF RESETS their stored configuration (to type linear/value 0, and
+    value 0/start 999, respectively) rather than preserving it the way
+    day_of_week_adjustment and seasonality do. Call this alongside validate() before
+    any write that might be a toggle-off for either rule; validate() alone cannot see
+    this class of problem because the write is not invalid.
+    """
+    warnings: list[str] = []
+    for rule, toggle_key in (("last_minute_prices", "last_min_factor_on"),
+                             ("far_out_premium", "far_out_premium_on")):
+        cfg = customizations.get(rule)
+        if isinstance(cfg, dict) and toggle_key in cfg and not cfg[toggle_key]:
+            warnings.append(
+                f"{rule}: toggling {toggle_key} off RESETS its stored configuration "
+                "(legal, PriceLabs returns 200 -- but re-enabling later needs the "
+                "full configuration again, not just the toggle)")
+    return warnings
 
 
 def snapshot_payload(listing_id: str, pms: str, current: dict) -> dict:
