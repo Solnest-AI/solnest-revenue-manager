@@ -619,6 +619,113 @@ check("D3: merge_dow raises on an unrecognized key in changes rather than droppi
       "a typo'd key would otherwise vanish silently: not applied, not flagged, and "
       "invisible to validate() too -- a successful write that changed nothing")
 
+# --- customization_write: fix round 2 (coordinator review) ------------------------
+# Round 1 fixed the toggle-gating anti-pattern in validate() (range/type checks running
+# even when the caller only restated the fields they changed) but the same rewrite --
+# "check if the toggle is on" -> "check what is present" -- silently converted every
+# required-FIELD-missing case into a pass, because an absent field is never present.
+# Presence is the right gate for a range check (only check what you were given) and the
+# wrong gate for a completeness check (the whole point is detecting what you were NOT
+# given). All ground truth below is read directly from
+# references/pricelabs-api/customizations.md, not paraphrased.
+
+# Axis 1: the 0-through-7 day sweep, explicit, both with and without the toggle restated.
+# Independently re-verified against the shipped module before this fix (see the fix
+# report): validate({"day_of_week_adjustment": {"dow_factor_on": True}}) returned [],
+# reproducing the coordinator's exact claim.
+for _n in range(8):
+    _cfg_on = {cw.DOW_KEYS[i]: -10.0 for i in range(_n)}
+    _cfg_on["dow_factor_on"] = True
+    _result_on = cw.validate({"day_of_week_adjustment": _cfg_on})
+    if _n == 7:
+        check(f"day sweep: {_n} days + toggle True is a complete write, not flagged",
+              not _result_on, f"got {_result_on}")
+    else:
+        check(f"day sweep: {_n} days + toggle True is caught as incomplete "
+              "(THE HOLE: 0 days used to be silent)",
+              _result_on, f"{_n} days with the toggle restated must never return []")
+
+    _cfg_off = {cw.DOW_KEYS[i]: -10.0 for i in range(_n)}
+    _result_off = cw.validate({"day_of_week_adjustment": _cfg_off})
+    if _n == 0:
+        check("day sweep: 0 days, no toggle key at all, is a legitimate no-op "
+              "(not touching this rule) and must not be flagged",
+              not _result_off, f"got {_result_off}")
+    elif _n == 7:
+        check("day sweep: 7 days, no toggle key, is a complete write, not flagged",
+              not _result_off, f"got {_result_off}")
+    else:
+        check(f"day sweep: {_n} days, no toggle key, is still caught as incomplete "
+              "(presence alone must keep working, regardless of the toggle fix)",
+              _result_off, f"{_n} days must never return []")
+
+# Axis 2: one test per omitted-required-field shape from the coordinator's table, all
+# ground-truthed against references/pricelabs-api/customizations.md's own "Required
+# for ..." text on each field, not against the coordinator's paraphrase of it.
+check("last-minute linear with value but no dfd is rejected (dfd: \"Required for "
+      "linear/linear_gradual/fixed\")",
+      cw.validate({"last_minute_prices": {"last_min_factor_on": True,
+                                          "last_min_factor_type": "linear",
+                                          "last_min_factor_value": -20}}),
+      "last_min_factor_dfd omitted must not silently pass")
+check("far-out linear with value but no start/step is rejected (both: \"Required for "
+      "linear\")",
+      cw.validate({"far_out_premium": {"far_out_premium_on": True,
+                                       "far_out_premium_type": "linear",
+                                       "far_out_premium_value": 25}}),
+      "far_out_premium_start and _step omitted must not silently pass")
+check("far-out fix with value but no start is rejected (\"Required for linear/fix\")",
+      cw.validate({"far_out_premium": {"far_out_premium_on": True,
+                                       "far_out_premium_type": "fix",
+                                       "far_out_premium_value": 25}}),
+      "far_out_premium_start omitted must not silently pass, even for type fix")
+check("far-out linear with start+step but no value is rejected (\"Required for "
+      "linear/fix\")",
+      cw.validate({"far_out_premium": {"far_out_premium_on": True,
+                                       "far_out_premium_type": "linear",
+                                       "far_out_premium_start": 180,
+                                       "far_out_premium_step": 1}}),
+      "far_out_premium_value omitted must not silently pass")
+
+# Axis 3: anti-over-correction guards, alongside each axis-2 case, so the next person
+# cannot "fix" a missed required field by making the validator reject everything.
+check("a COMPLETE linear last-minute payload (value+dfd both present) still returns []",
+      not cw.validate({"last_minute_prices": {"last_min_factor_on": True,
+                                              "last_min_factor_type": "linear",
+                                              "last_min_factor_value": -20,
+                                              "last_min_factor_dfd": 14}}))
+check("a valid `fixed` last-minute payload still returns []",
+      not cw.validate({"last_minute_prices": {"last_min_factor_on": True,
+                                              "last_min_factor_type": "fixed",
+                                              "last_min_factor_value": 50,
+                                              "last_min_factor_dfd": 7}}))
+check("a COMPLETE linear far-out payload (value+start+step all present) still returns []",
+      not cw.validate({"far_out_premium": {"far_out_premium_on": True,
+                                           "far_out_premium_type": "linear",
+                                           "far_out_premium_value": 25,
+                                           "far_out_premium_start": 180,
+                                           "far_out_premium_step": 1}}))
+check("a valid `fix` far-out payload with NO step (step is not required for fix) "
+      "still returns []",
+      not cw.validate({"far_out_premium": {"far_out_premium_on": True,
+                                           "far_out_premium_type": "fix",
+                                           "far_out_premium_value": 25,
+                                           "far_out_premium_start": 180}}))
+check("a full valid seven-day write still returns []",
+      not cw.validate({"day_of_week_adjustment": dict(
+          RULES["day_of_week_adjustment"], dow_factor_value_mon=-10.0)}))
+for _spelling in ("none", "recommended", "conservative", "aggressive",
+                  "moderately_conservative", "moderately_aggressive"):
+    check(f"last-minute market-driven type {_spelling!r} still returns [] "
+          "(no value/dfd required for these)",
+          not cw.validate({"last_minute_prices": {"last_min_factor_on": True,
+                                                   "last_min_factor_type": _spelling}}),
+          f"got {cw.validate({'last_minute_prices': {'last_min_factor_on': True, 'last_min_factor_type': _spelling}})}")
+    check(f"far-out market-driven type {_spelling!r} still returns [] "
+          "(no value/start/step required for these)",
+          not cw.validate({"far_out_premium": {"far_out_premium_on": True,
+                                               "far_out_premium_type": _spelling}}))
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:

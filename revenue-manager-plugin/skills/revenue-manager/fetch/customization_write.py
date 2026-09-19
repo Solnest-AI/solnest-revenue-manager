@@ -9,8 +9,12 @@ Every function here is a guard against a measured failure that returns HTTP 200:
                       rather than silently assuming or dropping it (fix round 1, D1/D3)
   validate            one invalid value rejects the whole request, so ranges are checked
                       before the payload is built, not after a partial mental model of it.
-                      Checks run on whatever fields are PRESENT; the on/off toggle no
-                      longer gates whether a check runs at all (fix round 1, A1-A4)
+                      Range checks run on whatever fields are PRESENT; the on/off toggle
+                      no longer gates whether a check runs at all (fix round 1, A1-A4).
+                      Presence is the wrong gate for a COMPLETENESS check, though --
+                      "only check what's given" and "flag what's missing" are different
+                      questions, and conflating them in round 1 silently turned six
+                      required-field omissions into a pass (fix round 2)
   snapshot_payload    the rollback. The exact object needed to re-POST the prior state.
                       Deep-copies `current` so a later mutation of the caller's dict can
                       never reach back into an already-taken snapshot (fix round 1, C1)
@@ -150,8 +154,15 @@ def validate(customizations: dict) -> list[str]:
 
         if rule == "day_of_week_adjustment":
             present = [k for k in DOW_KEYS if k in cfg]
-            # A1: completeness no longer depends on dow_factor_on being restated.
-            if present and len(present) != 7:
+            # A1 (fix round 1) made completeness run on presence instead of the toggle,
+            # which introduced its own hole (fix round 2): an EMPTY `present` with the
+            # toggle on short-circuited past the check entirely, so
+            # {"dow_factor_on": True} alone -- re-enabling a rule with zero days
+            # restated -- validated clean. PriceLabs defaults every omitted day to 0, so
+            # this would wipe a live Fri/Sat premium. `present` alone still catches 1-6
+            # days regardless of the toggle; the `or cfg.get(...)` term is what catches
+            # the zero-days-plus-toggle-on case specifically.
+            if (present or cfg.get("dow_factor_on")) and len(present) != 7:
                 errors.append("day_of_week_adjustment: all seven days must be sent; "
                               f"got {len(present)}. Omitted days reset to 0")
             for key in present:
@@ -181,7 +192,18 @@ def validate(customizations: dict) -> list[str]:
                 elif kind in MARKET_DRIVEN or kind == "none":
                     pass  # no readable numeric value to range-check for these types
                 elif kind in ("linear", "linear_gradual", "fixed"):
-                    if "last_min_factor_value" in cfg:
+                    # Fix round 2: both fields are "Required for linear/linear_gradual/
+                    # fixed" per references/pricelabs-api/customizations.md, independent
+                    # of the toggle -- round 1 removed the toggle gate from
+                    # last_min_factor_value's required-check (good) but left it gated on
+                    # `last_min_factor_on` for the ELSE branch (the exact anti-pattern A2
+                    # existed to remove, left in one spot) and never added a required-
+                    # check for last_min_factor_dfd at all, only a presence-gated range
+                    # check. Both are now required-if-absent, independent of the toggle.
+                    if "last_min_factor_value" not in cfg:
+                        errors.append("last_minute_prices: last_min_factor_value is "
+                                      f"required for type {kind}")
+                    else:
                         value = to_setting(cfg.get("last_min_factor_value"))
                         if value is None:
                             errors.append("last_minute_prices: last_min_factor_value is "
@@ -191,10 +213,10 @@ def validate(customizations: dict) -> list[str]:
                                      else RANGES["last_min_premium"])
                             _in_range(abs(value), bounds,
                                       "last_minute_prices.last_min_factor_value", errors)
-                    elif cfg.get("last_min_factor_on"):
-                        errors.append("last_minute_prices: last_min_factor_value is "
+                    if "last_min_factor_dfd" not in cfg:
+                        errors.append("last_minute_prices: last_min_factor_dfd is "
                                       f"required for type {kind}")
-                    if "last_min_factor_dfd" in cfg:
+                    else:
                         _in_range(cfg.get("last_min_factor_dfd"), RANGES["last_min_dfd"],
                                   "last_minute_prices.last_min_factor_dfd", errors)
                 elif kind is None:
@@ -219,15 +241,34 @@ def validate(customizations: dict) -> list[str]:
                 elif kind in MARKET_DRIVEN or kind == "none":
                     pass  # no readable numeric value to range-check for these types
                 elif kind in ("linear", "fix"):
-                    if "far_out_premium_value" in cfg:
+                    # Fix round 2: value and start are "Required for linear/fix"; step
+                    # is "Required for linear; ignored for fix" per
+                    # references/pricelabs-api/customizations.md. Round 1's presence-
+                    # gated range checks (`if field in cfg: range-check it`) never had a
+                    # companion "else: required" branch, so all three fields silently
+                    # passed validation when omitted -- the presence gate is right for a
+                    # range check (only check what's given) but wrong for a completeness
+                    # check (the whole point is catching what's NOT given). Both gates
+                    # are needed together, not one substituted for the other.
+                    if "far_out_premium_value" not in cfg:
+                        errors.append("far_out_premium: far_out_premium_value is "
+                                      f"required for type {kind}")
+                    else:
                         _in_range(cfg.get("far_out_premium_value"), RANGES["far_out_value"],
                                   "far_out_premium.far_out_premium_value", errors)
-                    if "far_out_premium_start" in cfg:
+                    if "far_out_premium_start" not in cfg:
+                        errors.append("far_out_premium: far_out_premium_start is "
+                                      f"required for type {kind}")
+                    else:
                         _in_range(cfg.get("far_out_premium_start"), RANGES["far_out_start"],
                                   "far_out_premium.far_out_premium_start", errors)
-                    if kind == "linear" and "far_out_premium_step" in cfg:
-                        _in_range(cfg.get("far_out_premium_step"), RANGES["far_out_step"],
-                                  "far_out_premium.far_out_premium_step", errors)
+                    if kind == "linear":
+                        if "far_out_premium_step" not in cfg:
+                            errors.append("far_out_premium: far_out_premium_step is "
+                                          "required for type linear")
+                        else:
+                            _in_range(cfg.get("far_out_premium_step"), RANGES["far_out_step"],
+                                      "far_out_premium.far_out_premium_step", errors)
                 elif kind is None:
                     # A3: a missing type used to silently skip every check -- this is
                     # the exact case that let value=9999/start=-50 through.
