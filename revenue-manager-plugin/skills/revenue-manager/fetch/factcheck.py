@@ -35,6 +35,7 @@ import argparse
 import csv
 import io
 import json
+import re
 import statistics
 import sys
 
@@ -790,12 +791,81 @@ def override_facts_reduced(text: str) -> dict:
     return override_facts_from_runs(runs)
 
 
+# --------------------------------------------------------------- customizations
+CUSTOMIZATION_FACTS = ["rules_total", "rules_on", "rules_off", "dow_abs_total",
+                       "stored_seasons"]
+
+# _CZ_TOGGLE_KEY and _CZ_DOW_KEYS deliberately duplicate reduce_customizations.TOGGLE_KEY
+# and attribution.DOW_KEYS instead of importing them. This is NOT a DRY violation: a
+# fact-class extractor that imports the reducer's own constants would recompute "on" or
+# "day-of-week magnitude" using the very mapping that might have just changed underneath
+# it, so a bug that renames or reorders a key would sail through undetected. Keeping a
+# second, independently-typed copy here is what makes this a real check instead of the
+# reducer checking itself. If reduce_customizations.py ever changes these, this file must
+# be updated by hand -- that friction is the point.
+_CZ_TOGGLE_KEY = {
+    "seasonality": "seasonality_customization_on",
+    "last_minute_prices": "last_min_factor_on",
+    "far_out_premium": "far_out_premium_on",
+    "day_of_week_adjustment": "dow_factor_on",
+    "demand_factor": "tone_demand_factor_on",
+    "custom_seasonal_profile": "custom_seasonal_profile_on",
+}
+_CZ_DOW_KEYS = ["dow_factor_value_mon", "dow_factor_value_tue", "dow_factor_value_wed",
+                "dow_factor_value_thu", "dow_factor_value_fri", "dow_factor_value_sat",
+                "dow_factor_value_sun"]
+
+
+def customization_facts_full(raw: dict) -> dict:
+    """Derive the facts straight from the API payload, not from the reducer."""
+    rules = raw.get("customizations") or {}
+    on = sum(1 for name, cfg in rules.items()
+             if (cfg or {}).get(_CZ_TOGGLE_KEY.get(name, ""), False))
+    dow = rules.get("day_of_week_adjustment") or {}
+    dow_abs = sum(abs(float(dow.get(k) or 0)) for k in _CZ_DOW_KEYS)
+    profile = (rules.get("custom_seasonal_profile") or {}).get("custom_seasonal_profile") or {}
+    seasons = len(profile.get("seasons") or []) + len(profile.get("non_repeating_seasons") or [])
+    return {"rules_total": len(rules), "rules_on": on, "rules_off": len(rules) - on,
+            "dow_abs_total": dow_abs, "stored_seasons": seasons}
+
+
+def customization_facts_reduced(text: str) -> dict:
+    """Re-derive the same facts by parsing the reducer's printed table."""
+    rows = []
+    in_rules = False
+    for line in text.splitlines():
+        if line.startswith("## rules"):
+            in_rules = True
+            continue
+        if line.startswith("## "):
+            in_rules = False
+            continue
+        if in_rules and line.strip():
+            rows.append(line)
+    if not rows:
+        return {n: None for n in CUSTOMIZATION_FACTS}
+    parsed = list(csv.DictReader(io.StringIO("\n".join(rows))))
+    on = sum(1 for r in parsed if r["toggle"] == "on")
+    dow_abs = 0.0
+    seasons = 0
+    for r in parsed:
+        if r["rule"] == "day_of_week_adjustment":
+            for pair in r["value"].split():
+                dow_abs += abs(float(pair.split("=")[1]))
+        if r["rule"] == "custom_seasonal_profile":
+            match = re.match(r"(\d+) seasons", r["window"])
+            seasons = int(match.group(1)) if match else 0
+    return {"rules_total": len(parsed), "rules_on": on, "rules_off": len(parsed) - on,
+            "dow_abs_total": dow_abs, "stored_seasons": seasons}
+
+
 SOURCES = {
     "airroi": (AIRROI_FACTS, airroi_facts_full, airroi_facts_reduced),
     "neighborhood": (NEIGHBORHOOD_FACTS, neighborhood_facts_full, neighborhood_facts_reduced),
     "calendar": (CALENDAR_FACTS, calendar_facts_full, calendar_facts_reduced),
     "reservations": (RESERVATION_FACTS, reservation_facts_full, reservation_facts_reduced),
     "overrides": (OVERRIDE_FACTS, override_facts_full, override_facts_reduced),
+    "customizations": (CUSTOMIZATION_FACTS, customization_facts_full, customization_facts_reduced),
 }
 
 

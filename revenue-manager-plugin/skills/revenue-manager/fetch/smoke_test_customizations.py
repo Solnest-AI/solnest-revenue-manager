@@ -191,6 +191,32 @@ check("flatten_profiles renders a missing name as an empty cell",
       rc.flatten_profiles(profiles_missing_name)[0][2] == "",
       f"got {rc.flatten_profiles(profiles_missing_name)[0][2]!r}")
 
+# --- factcheck round trip ----------------------------------------------------
+import io, contextlib  # noqa: E402
+import factcheck as fc  # noqa: E402
+
+check("customizations is a registered fact source", "customizations" in fc.SOURCES)
+
+full = fc.customization_facts_full({"customizations": RULES})
+check("full extractor counts all six rules", full["rules_total"] == 6, f"got {full}")
+check("full extractor counts the off ones", full["rules_off"] == 2, f"got {full}")
+check("full extractor sums the day-of-week magnitude",
+      abs(full["dow_abs_total"] - 50.0) < 1e-9,
+      f"got {full['dow_abs_total']}, want 50 (10+10+15+15)")
+check("full extractor records the dormant season count",
+      full["stored_seasons"] == 2, f"got {full['stored_seasons']}")
+
+# render the same rules through the reducer's own table, then read it back
+buf = io.StringIO()
+buf.write("## rules\n")
+w = __import__("csv").writer(buf, lineterminator="\n")
+w.writerow(rc.RULE_COLUMNS)
+for r in rc.normalize_rules(RULES):
+    w.writerow([r[c] for c in rc.RULE_COLUMNS])
+reduced = fc.customization_facts_reduced(buf.getvalue())
+bad = fc.compare(full, reduced, fc.CUSTOMIZATION_FACTS)
+check("every customization fact survives the reducer", not bad, f"changed: {bad}")
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:
