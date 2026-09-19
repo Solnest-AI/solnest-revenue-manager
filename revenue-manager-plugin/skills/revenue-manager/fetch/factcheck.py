@@ -792,8 +792,8 @@ def override_facts_reduced(text: str) -> dict:
 
 
 # --------------------------------------------------------------- customizations
-CUSTOMIZATION_FACTS = ["rules_total", "rules_on", "rules_off", "dow_abs_total",
-                       "stored_seasons"]
+CUSTOMIZATION_FACTS = ["rules_total", "rules_on", "rules_off", "rules_digest",
+                       "dow_abs_total", "dow_digest", "stored_seasons"]
 
 # _CZ_TOGGLE_KEY and _CZ_DOW_KEYS deliberately duplicate reduce_customizations.TOGGLE_KEY
 # and attribution.DOW_KEYS instead of importing them. This is NOT a DRY violation: a
@@ -817,16 +817,34 @@ _CZ_DOW_KEYS = ["dow_factor_value_mon", "dow_factor_value_tue", "dow_factor_valu
 
 
 def customization_facts_full(raw: dict) -> dict:
-    """Derive the facts straight from the API payload, not from the reducer."""
+    """Derive the facts straight from the API payload, not from the reducer.
+
+    rules_digest and dow_digest exist because rules_on/off and dow_abs_total are a count
+    and a sum, and both are invariant under permutation: swap which two rules are off, or
+    which day carries which value, and the count/sum does not move. A digest over the
+    actual (rule, state) / (day, value) pairs is the only thing that can see a
+    mislabeling -- and in this domain, a discount rendered as a premium on the wrong day
+    is the worst failure there is.
+    """
     rules = raw.get("customizations") or {}
-    on = sum(1 for name, cfg in rules.items()
-             if (cfg or {}).get(_CZ_TOGGLE_KEY.get(name, ""), False))
+    rule_pairs = sorted((name, "on" if (cfg or {}).get(_CZ_TOGGLE_KEY.get(name, ""), False) else "off")
+                        for name, cfg in rules.items())
+    on = sum(1 for _, state in rule_pairs if state == "on")
     dow = rules.get("day_of_week_adjustment") or {}
-    dow_abs = sum(abs(float(dow.get(k) or 0)) for k in _CZ_DOW_KEYS)
+    # Round through PRECISION's "pct" bucket here, per value, not just on the final sum:
+    # the reducer prints each day's value with :g (6 significant digits), so comparing a
+    # raw full-precision float against that truncation is a false mismatch waiting to
+    # happen (see PRECISION's own comment: "Reducers round to these; extractors compare at
+    # these"). Rounding every value the same way before it feeds either the sum or the
+    # digest is what makes both dow_abs_total and dow_digest agree on an unchanged value.
+    dow_pairs = [(k[-3:], _r(dow.get(k) or 0, "pct")) for k in _CZ_DOW_KEYS]
+    dow_abs = sum(abs(v) for _, v in dow_pairs)
     profile = (rules.get("custom_seasonal_profile") or {}).get("custom_seasonal_profile") or {}
     seasons = len(profile.get("seasons") or []) + len(profile.get("non_repeating_seasons") or [])
     return {"rules_total": len(rules), "rules_on": on, "rules_off": len(rules) - on,
-            "dow_abs_total": dow_abs, "stored_seasons": seasons}
+            "rules_digest": _digest(rule_pairs),
+            "dow_abs_total": dow_abs, "dow_digest": _digest(dow_pairs),
+            "stored_seasons": seasons}
 
 
 def customization_facts_reduced(text: str) -> dict:
@@ -845,18 +863,23 @@ def customization_facts_reduced(text: str) -> dict:
     if not rows:
         return {n: None for n in CUSTOMIZATION_FACTS}
     parsed = list(csv.DictReader(io.StringIO("\n".join(rows))))
-    on = sum(1 for r in parsed if r["toggle"] == "on")
-    dow_abs = 0.0
+    rule_pairs = sorted((r["rule"], "on" if r["toggle"] == "on" else "off") for r in parsed)
+    on = sum(1 for _, state in rule_pairs if state == "on")
+    dow_pairs = []
     seasons = 0
     for r in parsed:
         if r["rule"] == "day_of_week_adjustment":
             for pair in r["value"].split():
-                dow_abs += abs(float(pair.split("=")[1]))
+                day, val = pair.split("=")
+                dow_pairs.append((day, _r(val, "pct")))
         if r["rule"] == "custom_seasonal_profile":
             match = re.match(r"(\d+) seasons", r["window"])
             seasons = int(match.group(1)) if match else 0
+    dow_abs = sum(abs(v) for _, v in dow_pairs)
     return {"rules_total": len(parsed), "rules_on": on, "rules_off": len(parsed) - on,
-            "dow_abs_total": dow_abs, "stored_seasons": seasons}
+            "rules_digest": _digest(rule_pairs),
+            "dow_abs_total": dow_abs, "dow_digest": _digest(dow_pairs),
+            "stored_seasons": seasons}
 
 
 SOURCES = {

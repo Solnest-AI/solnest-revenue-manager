@@ -50,7 +50,7 @@ from datetime import date, datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _cache import cache_dir  # noqa: E402
-from attribution import DOW_KEYS, to_number  # noqa: E402
+from attribution import DOW_KEYS, to_setting  # noqa: E402
 
 BASE = "https://api.pricelabs.co"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"  # WAF 403s bare clients
@@ -127,13 +127,13 @@ def call(method: str, path: str, key: str, query: dict | None = None,
 def rule_window(rule: str, cfg: dict) -> str:
     """How much of the horizon this rule reaches."""
     if rule == "last_minute_prices":
-        dfd = to_number(cfg.get("last_min_factor_dfd"))
+        dfd = to_setting(cfg.get("last_min_factor_dfd"))
         return f"<={int(dfd)}d" if dfd else "all"
     if rule == "far_out_premium":
-        start = to_number(cfg.get("far_out_premium_start"))
+        start = to_setting(cfg.get("far_out_premium_start"))
         return f">={int(start)}d" if start else "all"
     if rule == "day_of_week_adjustment":
-        days = [k[-3:] for k in DOW_KEYS if (to_number(cfg.get(k)) or 0.0) != 0.0]
+        days = [k[-3:] for k in DOW_KEYS if (to_setting(cfg.get(k)) or 0.0) != 0.0]
         return ",".join(days) if days else "none"
     if rule == "custom_seasonal_profile":
         profile = cfg.get("custom_seasonal_profile") or {}
@@ -144,10 +144,10 @@ def rule_window(rule: str, cfg: dict) -> str:
 
 def rule_value(rule: str, cfg: dict) -> str:
     if rule == "day_of_week_adjustment":
-        return " ".join(f"{k[-3:]}={to_number(cfg.get(k)) or 0.0:g}" for k in DOW_KEYS)
+        return " ".join(f"{k[-3:]}={to_setting(cfg.get(k)) or 0.0:g}" for k in DOW_KEYS)
     for key in ("last_min_factor_value", "far_out_premium_value"):
         if key in cfg:
-            value = to_number(cfg.get(key))
+            value = to_setting(cfg.get(key))
             return "-" if value is None else f"{value:g}"
     return "-"
 

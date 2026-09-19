@@ -44,7 +44,13 @@ DOW_KEYS = ["dow_factor_value_mon", "dow_factor_value_tue", "dow_factor_value_we
 
 
 def to_number(value):
-    """Return a float, or None for a sentinel or an unparseable value."""
+    """Return a float, or None for a sentinel or an unparseable value.
+
+    PRICE-field parser only. -1 and -2 are PriceLabs' "no value" marker on a price (e.g.
+    a booked date's user_price) -- use this for `price` / `uncustomized_price` and nothing
+    else. A customization config value (a percentage, a days-out threshold) is a different
+    domain where -1 and -2 are ordinary in-range numbers; use to_setting() for those.
+    """
     if value in SENTINELS:
         return None
     try:
@@ -52,6 +58,26 @@ def to_number(value):
     except (TypeError, ValueError):
         return None
     return None if out in SENTINELS else out
+
+
+def to_setting(value):
+    """Return a float for a customization CONFIG value (a percentage adjustment, or a
+    days-out / days-from-departure threshold), or None only for a genuinely missing or
+    unparseable value.
+
+    Deliberately does NOT apply to_number()'s sentinel filter. -1 and -2 are PriceLabs'
+    "no value" marker on a PRICE field, not on a customization setting: a day-of-week,
+    last-minute or far-out percentage is documented -75..1000, so -1% and -2% are ordinary,
+    real values here. Filtering them out (reusing the price parser on config data) makes a
+    live -1%/-2% rule read as absent, and a read-modify-write built on that reading would
+    silently zero it on write. Keep this split -- see rule_covers()/rule_direction() below
+    and reduce_customizations.rule_value()/rule_window(), which are the only intended
+    callers.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def ce_rows(price_rows: list[dict], today: str) -> list[dict]:
@@ -118,13 +144,13 @@ def rule_covers(rule: str, cfg: dict, row: dict) -> bool:
     default, which is still an effect that has to be explained.
     """
     if rule == "day_of_week_adjustment":
-        value = to_number(cfg.get(DOW_KEYS[row["dow"]])) or 0.0
+        value = to_setting(cfg.get(DOW_KEYS[row["dow"]])) or 0.0
         return value != 0.0 or not cfg.get("dow_factor_on", False)
     if rule == "last_minute_prices":
-        dfd = to_number(cfg.get("last_min_factor_dfd"))
+        dfd = to_setting(cfg.get("last_min_factor_dfd"))
         return row["days_out"] <= dfd if dfd is not None else True
     if rule == "far_out_premium":
-        start = to_number(cfg.get("far_out_premium_start"))
+        start = to_setting(cfg.get("far_out_premium_start"))
         return row["days_out"] >= start if start is not None else True
     # seasonality, demand_factor and custom_seasonal_profile have no date window in
     # their config: they apply across the whole horizon.
@@ -138,7 +164,7 @@ def rule_direction(rule: str, cfg: dict, row: dict | None = None) -> str:
             return "unknown"
         if row is None:
             return "unknown"
-        value = to_number(cfg.get(DOW_KEYS[row["dow"]])) or 0.0
+        value = to_setting(cfg.get(DOW_KEYS[row["dow"]])) or 0.0
         return "down" if value < 0 else "up" if value > 0 else "none"
     if rule == "last_minute_prices":
         if not cfg.get("last_min_factor_on", False):
@@ -148,7 +174,7 @@ def rule_direction(rule: str, cfg: dict, row: dict | None = None) -> str:
             return "unknown"
         if kind == "none":
             return "none"
-        value = to_number(cfg.get("last_min_factor_value"))
+        value = to_setting(cfg.get("last_min_factor_value"))
         return "unknown" if value is None else "down" if value < 0 else "up" if value > 0 else "none"
     if rule == "far_out_premium":
         if not cfg.get("far_out_premium_on", False):
@@ -158,7 +184,7 @@ def rule_direction(rule: str, cfg: dict, row: dict | None = None) -> str:
             return "unknown"
         if kind == "none":
             return "none"
-        value = to_number(cfg.get("far_out_premium_value"))
+        value = to_setting(cfg.get("far_out_premium_value"))
         return "unknown" if value is None else "down" if value < 0 else "up" if value > 0 else "none"
     # seasonality / demand_factor / custom_seasonal_profile: the config carries a tone
     # or a season set, never a single readable sign for the whole horizon.

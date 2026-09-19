@@ -217,6 +217,136 @@ reduced = fc.customization_facts_reduced(buf.getvalue())
 bad = fc.compare(full, reduced, fc.CUSTOMIZATION_FACTS)
 check("every customization fact survives the reducer", not bad, f"changed: {bad}")
 
+# --- fix round 1, finding 1: sums/counts are blind to mislabeling -----------
+# dow_abs_total is a sum and rules_on/off are counts. Both are invariant under
+# permutation: swap which day carries which value, or which two rules are off, and the
+# number does not move. Only a digest over the actual (label, value) pairs can see it.
+
+swap_buf = io.StringIO()
+swap_buf.write("## rules\n")
+sw = __import__("csv").writer(swap_buf, lineterminator="\n")
+sw.writerow(rc.RULE_COLUMNS)
+for r in rc.normalize_rules(RULES):
+    row = dict(r)
+    if row["rule"] == "day_of_week_adjustment":
+        # simulate a reducer bug that trades Monday's and Friday's printed values while
+        # every day label stays in its normal position: abs(-10)+abs(15) either way, so
+        # dow_abs_total cannot see this, but dow_digest must.
+        row["value"] = "mon=15 tue=-10 wed=0 thu=0 fri=-10 sat=15 sun=0"
+    sw.writerow([row[c] for c in rc.RULE_COLUMNS])
+swap_reduced = fc.customization_facts_reduced(swap_buf.getvalue())
+check("a day-value permutation leaves dow_abs_total unchanged (the blind spot)",
+      abs(swap_reduced["dow_abs_total"] - full["dow_abs_total"]) < 1e-9,
+      f"full={full['dow_abs_total']} swapped={swap_reduced['dow_abs_total']}")
+swap_bad = fc.compare(full, swap_reduced, fc.CUSTOMIZATION_FACTS)
+check("but dow_digest catches the permutation",
+      any(b.startswith("dow_digest") for b in swap_bad), f"got bad={swap_bad}")
+
+rules_swap_buf = io.StringIO()
+rules_swap_buf.write("## rules\n")
+rsw = __import__("csv").writer(rules_swap_buf, lineterminator="\n")
+rsw.writerow(rc.RULE_COLUMNS)
+for r in rc.normalize_rules(RULES):
+    row = dict(r)
+    if row["rule"] == "seasonality":             # really OFF in RULES
+        row["toggle"] = "on"
+    elif row["rule"] == "demand_factor":          # really on in RULES
+        row["toggle"] = "OFF"
+    rsw.writerow([row[c] for c in rc.RULE_COLUMNS])
+rules_swap_reduced = fc.customization_facts_reduced(rules_swap_buf.getvalue())
+check("swapping which two rules are off leaves rules_on/rules_off unchanged (the blind spot)",
+      rules_swap_reduced["rules_on"] == full["rules_on"]
+      and rules_swap_reduced["rules_off"] == full["rules_off"],
+      f"got on={rules_swap_reduced['rules_on']} off={rules_swap_reduced['rules_off']}")
+rules_swap_bad = fc.compare(full, rules_swap_reduced, fc.CUSTOMIZATION_FACTS)
+check("but rules_digest catches which specific rules moved",
+      any(b.startswith("rules_digest") for b in rules_swap_bad), f"got bad={rules_swap_bad}")
+
+# --- fix round 1, finding 2: :g print-precision must not cause a false mismatch --
+# the reducer prints each day value with :g (6 significant digits). Comparing a raw
+# full-precision float against that truncation with exact != is a false mismatch waiting
+# to happen. PRECISION exists for exactly this; dow_abs_total and dow_digest must use it.
+
+hp_rules = {**RULES, "day_of_week_adjustment": dict(RULES["day_of_week_adjustment"],
+                                                     dow_factor_value_mon=14.285714285714286)}
+hp_full = fc.customization_facts_full({"customizations": hp_rules})
+hp_buf = io.StringIO()
+hp_buf.write("## rules\n")
+hpw = __import__("csv").writer(hp_buf, lineterminator="\n")
+hpw.writerow(rc.RULE_COLUMNS)
+for r in rc.normalize_rules(hp_rules):
+    hpw.writerow([r[c] for c in rc.RULE_COLUMNS])
+hp_reduced = fc.customization_facts_reduced(hp_buf.getvalue())
+hp_bad = fc.compare(hp_full, hp_reduced, fc.CUSTOMIZATION_FACTS)
+check("a high-precision day value (14.285714285714286 prints as '14.2857') round-trips "
+      "without a false mismatch",
+      not hp_bad, f"changed: {hp_bad}")
+
+# --- fix round 1, finding 3: sentinel collision on customization config values ----
+# attribution.SENTINELS = {-1, -2} is PriceLabs' "no value" marker on a PRICE field. Every
+# customization config reader used to run through to_number(), which applies that filter
+# to percentages too -- but -1%/-2% is an ordinary, real value there (documented range
+# -75..1000), not "no data". to_setting() is the sentinel-free config parser; to_number()
+# now serves price fields only.
+
+check("to_setting(-1.0) returns -1.0, not None (a real -1% setting is not a price sentinel)",
+      at.to_setting(-1.0) == -1.0, f"got {at.to_setting(-1.0)!r}")
+check("to_setting(-2.0) returns -2.0, not None",
+      at.to_setting(-2.0) == -2.0, f"got {at.to_setting(-2.0)!r}")
+check("to_setting(None) is still None (genuinely missing stays missing)",
+      at.to_setting(None) is None)
+check("to_setting('not a number') is still None (unparseable stays unparseable)",
+      at.to_setting("not a number") is None)
+
+# reading: a live -1% Monday must be seen as covering the date and pushing it down, not
+# read as an absent/market-driven rule
+live_dow = {"dow_factor_on": True,
+            "dow_factor_value_mon": -1.0, "dow_factor_value_tue": -2.0,
+            "dow_factor_value_wed": 0.0, "dow_factor_value_thu": 0.0,
+            "dow_factor_value_fri": 0.0, "dow_factor_value_sat": 0.0,
+            "dow_factor_value_sun": 0.0}
+check("a live -1% Monday is read as covering the date, not sentinel-stripped to absent",
+      at.rule_covers("day_of_week_adjustment", live_dow, mon))
+check("a live -1% Monday reads its real direction (down), not collapsed to 'none'",
+      at.rule_direction("day_of_week_adjustment", live_dow, mon) == "down")
+
+# reading through the printed table: the reducer must render -1/-2, not blank them to 0
+live_norm = rc.normalize_rules({"day_of_week_adjustment": live_dow})[0]
+check("the reducer prints a live -1% Monday as -1, not silently blanked to 0",
+      "mon=-1" in live_norm["value"], f"got {live_norm['value']!r}")
+check("the reducer prints a live -2% Tuesday as -2, not silently blanked to 0",
+      "tue=-2" in live_norm["value"], f"got {live_norm['value']!r}")
+
+# writing: the read-modify-write hazard. customization_write.merge_dow (Task 4) has not
+# been built yet, but the shape of the bug does not need it -- ANY code that carries a
+# day's CURRENT value forward through the wrong parser during a partial update will zero
+# it. Reproduce that exact read-modify-write shape with the correct parser and prove the
+# live values survive; a real merge_dow, once built, must show the same result.
+def _simulate_partial_write(current: dict, changes: dict, parser) -> dict:
+    return {k: (changes[k] if k in changes else parser(current.get(k)) or 0.0)
+            for k in at.DOW_KEYS}
+
+merged = _simulate_partial_write(live_dow, {"dow_factor_value_sat": 20.0}, at.to_setting)
+check("a live -1% Monday survives a partial day-of-week write untouched, not zeroed",
+      merged["dow_factor_value_mon"] == -1.0, f"got {merged['dow_factor_value_mon']}")
+check("a live -2% Tuesday survives a partial day-of-week write untouched, not zeroed",
+      merged["dow_factor_value_tue"] == -2.0, f"got {merged['dow_factor_value_tue']}")
+check("the actually-changed Saturday value applies",
+      merged["dow_factor_value_sat"] == 20.0, f"got {merged['dow_factor_value_sat']}")
+
+# the identical read-modify-write shape using the OLD price parser reproduces the exact
+# bug the reviewer found. Kept as a permanent regression guard: if this ever stops
+# zeroing mon/tue, to_number()'s SENTINELS set changed underneath this test.
+broken = _simulate_partial_write(live_dow, {"dow_factor_value_sat": 20.0}, at.to_number)
+check("using the price parser on config data reproduces the exact bug (why the split matters)",
+      broken["dow_factor_value_mon"] == 0.0 and broken["dow_factor_value_tue"] == 0.0,
+      f"got mon={broken['dow_factor_value_mon']} tue={broken['dow_factor_value_tue']}")
+
+# the PRICE-field meaning of -1/-2 must be unchanged by this fix: ce_rows still drops them
+check("PRICE-field -1/-2 sentinels are still dropped by ce_rows (unchanged by this fix)",
+      not any(r["date"] in ("2026-10-01", "2026-10-02") for r in rows),
+      f"got dates={[r['date'] for r in rows]}")
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:
