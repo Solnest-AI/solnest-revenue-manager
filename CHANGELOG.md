@@ -1,5 +1,28 @@
 # Changelog
 
+## 4.2.0-rc7 (unreleased)
+
+- **Complete PriceLabs surface, documented and checked in.** Researched the published OpenAPI 3.1
+  specs, all 89 doc pages and the live MCP catalog, then measured what the skill actually uses.
+  The reducers reach **6 of 41** Customer API operations; the live MCP exposes **47 tools**.
+  New references:
+  - `references/pricelabs-api/` (GENERATED, 18 files, 43 operations) with every parameter,
+    request body, response field, enum and range. Built by `tools/pricelabs_spec_report.py`,
+    which re-fetches the specs and rewrites the directory, so the reference cannot rot silently
+    the way a hand-written one does. Raw specs archived in `docs/pricelabs/`.
+  - `references/pricelabs-gotchas.md`: every measured trap in one place. Auth and the WAF 403,
+    60/min and 1,000/hour, the 3-per-listing-per-24h refresh limit, $1/listing/month billing,
+    offset pagination, `reservation_data` returning the whole account, decaying override history,
+    custom comp-set payload shape, the sentinels, "off is not off" on customizations, and the
+    signed write that succeeds while doing the opposite of what was meant.
+  - `references/pricelabs-mcp.md`: all 47 MCP tools mapped to runbook steps, read vs write.
+  - `references/pricelabs-coverage.md`: the gap, ordered by what it would change. Biggest items
+    are `get_actions`, `get_listing_health_and_recommendations` and `diagnose_no_bookings`
+    (PriceLabs already computes diagnostics Step 4 rebuilds by hand), the customization layer,
+    and `get_user_logs` (an existing change history).
+  The whole corpus is read-on-demand: SKILL.md grows 571 tokens for the pointers, nothing else
+  loads unless a step asks for it.
+
 ## 4.2.0-rc6 (unreleased)
 
 - **`reduce_reservations.py` paginated wrong.** PriceLabs pages `reservation_data` on `offset`;

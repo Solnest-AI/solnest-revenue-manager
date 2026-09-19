@@ -562,6 +562,29 @@ Platform-specific parsing for every supported PMS (field names, units such as Ho
 
 PriceLabs, Wheelhouse and Beyond tool names, field traps and raw payload shapes, for reference. Read `references/pricing-tool-fields.md` only if a reducer exits 2 and you need to reason about the raw source, or the pricing tool is not PriceLabs.
 
+### `references/pricelabs-gotchas.md` — READ BEFORE ANY PRICELABS CALL OR WRITE
+Every measured PriceLabs trap in one place: auth and the WAF 403, the 60/min and 1,000/hour
+limits, the much tighter refresh limit, offset pagination, `reservation_data` returning the whole
+account, decaying override history, the custom comp-set payload shape, the sentinels, the
+"off is not off" customization behaviour, and the signed-value write that succeeds while doing
+the opposite of what you meant. Read it at Step 4 the first time a run touches PriceLabs, and
+again at Step 8 before any write.
+
+### `references/pricelabs-mcp.md` — the 47 MCP tools, mapped to runbook steps
+Which tool answers which question, which ones write, and which are not wired in yet.
+
+### `references/pricelabs-api.md` → `references/pricelabs-api/`
+GENERATED from the published OpenAPI 3.1 spec: all 43 REST operations with parameters, request
+bodies, response fields, enums and ranges, split one file per area. Read the one area you need,
+never the whole directory. Rebuild with `python3 tools/pricelabs_spec_report.py --fetch` and diff:
+PriceLabs renamed `/v1/listings` fields inside nine days in Aug-Sep 2026 and a client reading the
+old names failed silently.
+
+### `references/pricelabs-coverage.md` — what we use vs what exists
+The reducers touch 6 of 41 Customer API operations. This file lists what is unused, ordered by
+what it would change, including the three diagnostics PriceLabs already computes that Step 4
+currently rebuilds by hand.
+
 ## Optional enrichment reference (detect-and-use; never a critical path)
 
 AirROI, RankBreeze, Turno and Breezeway: tool names, caveats, what each adds. Read `references/enrichment.md` when Step 0 detects any of them.
