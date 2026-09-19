@@ -347,6 +347,84 @@ check("PRICE-field -1/-2 sentinels are still dropped by ce_rows (unchanged by th
       not any(r["date"] in ("2026-10-01", "2026-10-02") for r in rows),
       f"got dates={[r['date'] for r in rows]}")
 
+# --- customization_write -----------------------------------------------------
+import customization_write as cw  # noqa: E402
+
+# the trap: a partial day-of-week write silently zeroes the days you left out
+partial = {"dow_factor_value_fri": 20.0, "dow_factor_value_sat": 20.0}
+merged = cw.merge_dow(RULES["day_of_week_adjustment"], partial)
+check("merge_dow emits all seven days", sum(1 for k in merged if k.startswith("dow_factor_value")) == 7,
+      f"got {sorted(k for k in merged if k.startswith('dow_factor_value'))}")
+check("merge_dow preserves days the caller did not mention",
+      merged["dow_factor_value_mon"] == -10.0,
+      "a partial write would have reset Monday to 0")
+check("merge_dow applies the days the caller did mention",
+      merged["dow_factor_value_fri"] == 20.0)
+check("merge_dow keeps the toggle", merged["dow_factor_on"] is True)
+
+# range validation, all-or-nothing
+check("a day-of-week value below -75 is rejected",
+      cw.validate({"day_of_week_adjustment": dict(merged, dow_factor_value_mon=-80)}),
+      "-80 is outside the -75..1000 range and must not reach the API")
+check("a day-of-week value of 1000 is allowed",
+      not cw.validate({"day_of_week_adjustment": dict(merged, dow_factor_value_mon=1000)}))
+check("a last-minute discount over 75 is rejected",
+      cw.validate({"last_minute_prices": {"last_min_factor_on": True,
+                                          "last_min_factor_type": "linear",
+                                          "last_min_factor_value": -80,
+                                          "last_min_factor_dfd": 7}}))
+check("a far-out start over 999 is rejected",
+      cw.validate({"far_out_premium": {"far_out_premium_on": True,
+                                       "far_out_premium_type": "linear",
+                                       "far_out_premium_value": 10,
+                                       "far_out_premium_start": 1500,
+                                       "far_out_premium_step": 1}}))
+check("a valid payload returns no errors",
+      not cw.validate({"day_of_week_adjustment": merged}), f"got {cw.validate({'day_of_week_adjustment': merged})}")
+check("an unknown rule name is rejected rather than sent",
+      cw.validate({"not_a_rule": {}}))
+
+# the echo check: the API accepts either sign, so compare the effective block
+check("echo_diff is silent when the effective block matches intent",
+      not cw.echo_diff({"direction": "down", "magnitude": 10},
+                       {"effective": "Mon 10% discount"}))
+check("echo_diff catches a discount that came back as a premium",
+      cw.echo_diff({"direction": "down", "magnitude": 10},
+                   {"effective": "Mon 10% premium"}),
+      "this is the inverted-sign failure and it returns HTTP 200")
+check("echo_diff reports an unreadable effective block rather than passing it",
+      cw.echo_diff({"direction": "down", "magnitude": 10}, {}))
+
+# the action sign convention is INFERRED, not proven, so it is gated
+value, confirmed = cw.signed_from_action(
+    {"action_type": "last_minute_conservative_vs_market",
+     "metadata": {"current": {"discount_pct": -12.0}, "recommended": {"discount_pct": 40.0}}})
+check("an action's recommended discount is negated into a signed value",
+      value == -40.0, f"got {value}, want -40.0 (a 40% discount, not a 40% premium)")
+check("the conversion reports that it is unconfirmed",
+      confirmed is False, "the convention is inferred and must not be auto-applied")
+
+# --- customization_write: merge_dow regression guard (not in the brief) -----------
+# The brief's interface line named `attribution._num`, which has never existed in shipped
+# code -- attribution.py exposes to_number() (price fields, filters PriceLabs' -1/-2 "no
+# value" sentinels) and to_setting() (customization config fields, no sentinel filtering,
+# because -1%/-2% is an ordinary day-of-week value; see live_dow and
+# _simulate_partial_write above). customization_write.merge_dow is built on to_setting().
+# This closes the gap the comment above _simulate_partial_write called out explicitly:
+# prove the REAL merge_dow does what the simulation only modeled -- a live -1%/-2% day
+# survives a partial day-of-week write. If to_setting() were ever swapped back for
+# to_number() inside merge_dow, to_number()'s SENTINELS filter would read -1.0/-2.0 as
+# "no value", fall through to the `or 0.0`-style default, and this check would fail.
+live_merged = cw.merge_dow(live_dow, {"dow_factor_value_sat": 20.0})
+check("merge_dow preserves a live -1% Monday through a partial write, not zeroed",
+      live_merged["dow_factor_value_mon"] == -1.0,
+      f"got {live_merged['dow_factor_value_mon']}; to_number() here would silently wipe it")
+check("merge_dow preserves a live -2% Tuesday through a partial write, not zeroed",
+      live_merged["dow_factor_value_tue"] == -2.0,
+      f"got {live_merged['dow_factor_value_tue']}; to_number() here would silently wipe it")
+check("merge_dow still applies the day that was actually changed",
+      live_merged["dow_factor_value_sat"] == 20.0, f"got {live_merged['dow_factor_value_sat']}")
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:
