@@ -76,6 +76,16 @@ check("a market-driven type has unknown direction",
       at.rule_direction("demand_factor", RULES["demand_factor"]) == "unknown",
       "a market-driven rule's sign cannot be read from its config")
 
+# --- off-handling for day_of_week_adjustment --------------------------------
+# Create a copy with dow_factor_on = False, leaving stale per-day values untouched
+dow_off = {k: v for k, v in RULES["day_of_week_adjustment"].items()}
+dow_off["dow_factor_on"] = False
+check("off day-of-week still covers a day with value=0",
+      at.rule_covers("day_of_week_adjustment", dow_off, wed))
+check("off day-of-week returns unknown direction for a day with negative stale value",
+      at.rule_direction("day_of_week_adjustment", dow_off, mon) == "unknown",
+      "an off rule is market-driven, so direction is unknowable")
+
 # --- classify: the co-incidence test ----------------------------------------
 affected = {r["date"] for r in rows if r["ce"] < 1.0}     # the four Mon/Tue dates
 res = {c["rule"]: c for c in at.classify(affected, rows, RULES)}
@@ -96,6 +106,20 @@ check("far-out is excluded entirely: it covers none of the affected dates",
       f"got {res.get('far_out_premium')}")
 check("every rule gets a verdict, including the off ones",
       len(res) == 6, f"got {len(res)} rules classified, want 6")
+
+# Test that off day_of_week_adjustment cannot be confirmed
+rules_with_off_dow = {
+    "day_of_week_adjustment": dow_off,
+    "last_minute_prices": RULES["last_minute_prices"],
+    "far_out_premium": RULES["far_out_premium"],
+    "demand_factor": RULES["demand_factor"],
+    "seasonality": RULES["seasonality"],
+    "custom_seasonal_profile": RULES["custom_seasonal_profile"],
+}
+res_off = {c["rule"]: c for c in at.classify(affected, rows, rules_with_off_dow)}
+check("off day-of-week is NOT confirmed (unknown direction caps at candidate)",
+      res_off["day_of_week_adjustment"]["verdict"] != "confirmed",
+      f"got {res_off['day_of_week_adjustment']['verdict']}")
 
 # --- summary ----------------------------------------------------------------
 print()

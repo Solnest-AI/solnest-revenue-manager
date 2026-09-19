@@ -19,6 +19,11 @@ rules COULD explain the affected dates, and can any of them be pinned down.
 A market-driven rule type (recommended / conservative / aggressive) has no readable sign
 in its config, so its direction is "unknown" and it can never reach "confirmed".
 
+A rule that is toggled OFF is also market-driven: switching a rule off does not disable
+an adjustment, it hands the date to the algorithm's market-driven default. An off rule
+must be treated the same as a market-driven type: direction is "unknown" and it can never
+be confirmed.
+
 Pure functions. No network, no file I/O, no API key.
 """
 from __future__ import annotations
@@ -129,11 +134,15 @@ def rule_covers(rule: str, cfg: dict, row: dict) -> bool:
 def rule_direction(rule: str, cfg: dict, row: dict | None = None) -> str:
     """down, up, none, or unknown. A market-driven type is always unknown."""
     if rule == "day_of_week_adjustment":
+        if not cfg.get("dow_factor_on", False):
+            return "unknown"
         if row is None:
             return "unknown"
         value = to_number(cfg.get(DOW_KEYS[row["dow"]])) or 0.0
         return "down" if value < 0 else "up" if value > 0 else "none"
     if rule == "last_minute_prices":
+        if not cfg.get("last_min_factor_on", False):
+            return "unknown"
         kind = cfg.get("last_min_factor_type")
         if kind in MARKET_DRIVEN:
             return "unknown"
@@ -142,6 +151,8 @@ def rule_direction(rule: str, cfg: dict, row: dict | None = None) -> str:
         value = to_number(cfg.get("last_min_factor_value"))
         return "unknown" if value is None else "down" if value < 0 else "up" if value > 0 else "none"
     if rule == "far_out_premium":
+        if not cfg.get("far_out_premium_on", False):
+            return "unknown"
         kind = cfg.get("far_out_premium_type")
         if kind in MARKET_DRIVEN:
             return "unknown"

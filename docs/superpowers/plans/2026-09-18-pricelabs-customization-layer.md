@@ -226,6 +226,16 @@ check("a market-driven type has unknown direction",
       at.rule_direction("demand_factor", RULES["demand_factor"]) == "unknown",
       "a market-driven rule's sign cannot be read from its config")
 
+# --- off-handling for day_of_week_adjustment --------------------------------
+# Create a copy with dow_factor_on = False, leaving stale per-day values untouched
+dow_off = {k: v for k, v in RULES["day_of_week_adjustment"].items()}
+dow_off["dow_factor_on"] = False
+check("off day-of-week still covers a day with value=0",
+      at.rule_covers("day_of_week_adjustment", dow_off, wed))
+check("off day-of-week returns unknown direction for a day with negative stale value",
+      at.rule_direction("day_of_week_adjustment", dow_off, mon) == "unknown",
+      "an off rule is market-driven, so direction is unknowable")
+
 # --- classify: the co-incidence test ----------------------------------------
 affected = {r["date"] for r in rows if r["ce"] < 1.0}     # the four Mon/Tue dates
 res = {c["rule"]: c for c in at.classify(affected, rows, RULES)}
@@ -246,6 +256,20 @@ check("far-out is excluded entirely: it covers none of the affected dates",
       f"got {res.get('far_out_premium')}")
 check("every rule gets a verdict, including the off ones",
       len(res) == 6, f"got {len(res)} rules classified, want 6")
+
+# Test that off day_of_week_adjustment cannot be confirmed
+rules_with_off_dow = {
+    "day_of_week_adjustment": dow_off,
+    "last_minute_prices": RULES["last_minute_prices"],
+    "far_out_premium": RULES["far_out_premium"],
+    "demand_factor": RULES["demand_factor"],
+    "seasonality": RULES["seasonality"],
+    "custom_seasonal_profile": RULES["custom_seasonal_profile"],
+}
+res_off = {c["rule"]: c for c in at.classify(affected, rows, rules_with_off_dow)}
+check("off day-of-week is NOT confirmed (unknown direction caps at candidate)",
+      res_off["day_of_week_adjustment"]["verdict"] != "confirmed",
+      f"got {res_off['day_of_week_adjustment']['verdict']}")
 
 # --- summary ----------------------------------------------------------------
 print()
@@ -287,6 +311,11 @@ rules COULD explain the affected dates, and can any of them be pinned down.
 A market-driven rule type (recommended / conservative / aggressive) has no readable sign
 in its config, so its direction is "unknown" and it can never reach "confirmed".
 
+A rule that is toggled OFF is also market-driven: switching a rule off does not disable
+an adjustment, it hands the date to the algorithm's market-driven default. An off rule
+must be treated the same as a market-driven type: direction is "unknown" and it can never
+be confirmed.
+
 Pure functions. No network, no file I/O, no API key.
 """
 from __future__ import annotations
@@ -306,7 +335,7 @@ DOW_KEYS = ["dow_factor_value_mon", "dow_factor_value_tue", "dow_factor_value_we
             "dow_factor_value_sun"]
 
 
-def _num(value):
+def to_number(value):
     """Return a float, or None for a sentinel or an unparseable value."""
     if value in SENTINELS:
         return None
@@ -323,8 +352,8 @@ def ce_rows(price_rows: list[dict], today: str) -> list[dict]:
     out = []
     for row in price_rows:
         raw_date = str(row.get("date") or "")
-        price = _num(row.get("price"))
-        unc = _num(row.get("uncustomized_price"))
+        price = to_number(row.get("price"))
+        unc = to_number(row.get("uncustomized_price"))
         if not raw_date or price is None or unc is None or unc <= 0:
             continue
         try:
@@ -381,13 +410,13 @@ def rule_covers(rule: str, cfg: dict, row: dict) -> bool:
     default, which is still an effect that has to be explained.
     """
     if rule == "day_of_week_adjustment":
-        value = _num(cfg.get(DOW_KEYS[row["dow"]])) or 0.0
+        value = to_number(cfg.get(DOW_KEYS[row["dow"]])) or 0.0
         return value != 0.0 or not cfg.get("dow_factor_on", False)
     if rule == "last_minute_prices":
-        dfd = _num(cfg.get("last_min_factor_dfd"))
+        dfd = to_number(cfg.get("last_min_factor_dfd"))
         return row["days_out"] <= dfd if dfd is not None else True
     if rule == "far_out_premium":
-        start = _num(cfg.get("far_out_premium_start"))
+        start = to_number(cfg.get("far_out_premium_start"))
         return row["days_out"] >= start if start is not None else True
     # seasonality, demand_factor and custom_seasonal_profile have no date window in
     # their config: they apply across the whole horizon.
@@ -397,25 +426,31 @@ def rule_covers(rule: str, cfg: dict, row: dict) -> bool:
 def rule_direction(rule: str, cfg: dict, row: dict | None = None) -> str:
     """down, up, none, or unknown. A market-driven type is always unknown."""
     if rule == "day_of_week_adjustment":
+        if not cfg.get("dow_factor_on", False):
+            return "unknown"
         if row is None:
             return "unknown"
-        value = _num(cfg.get(DOW_KEYS[row["dow"]])) or 0.0
+        value = to_number(cfg.get(DOW_KEYS[row["dow"]])) or 0.0
         return "down" if value < 0 else "up" if value > 0 else "none"
     if rule == "last_minute_prices":
+        if not cfg.get("last_min_factor_on", False):
+            return "unknown"
         kind = cfg.get("last_min_factor_type")
         if kind in MARKET_DRIVEN:
             return "unknown"
         if kind == "none":
             return "none"
-        value = _num(cfg.get("last_min_factor_value"))
+        value = to_number(cfg.get("last_min_factor_value"))
         return "unknown" if value is None else "down" if value < 0 else "up" if value > 0 else "none"
     if rule == "far_out_premium":
+        if not cfg.get("far_out_premium_on", False):
+            return "unknown"
         kind = cfg.get("far_out_premium_type")
         if kind in MARKET_DRIVEN:
             return "unknown"
         if kind == "none":
             return "none"
-        value = _num(cfg.get("far_out_premium_value"))
+        value = to_number(cfg.get("far_out_premium_value"))
         return "unknown" if value is None else "down" if value < 0 else "up" if value > 0 else "none"
     # seasonality / demand_factor / custom_seasonal_profile: the config carries a tone
     # or a season set, never a single readable sign for the whole horizon.
@@ -681,13 +716,13 @@ def call(method: str, path: str, key: str, query: dict | None = None,
 def rule_window(rule: str, cfg: dict) -> str:
     """How much of the horizon this rule reaches."""
     if rule == "last_minute_prices":
-        dfd = _num(cfg.get("last_min_factor_dfd"))
+        dfd = to_number(cfg.get("last_min_factor_dfd"))
         return f"<={int(dfd)}d" if dfd else "all"
     if rule == "far_out_premium":
-        start = _num(cfg.get("far_out_premium_start"))
+        start = to_number(cfg.get("far_out_premium_start"))
         return f">={int(start)}d" if start else "all"
     if rule == "day_of_week_adjustment":
-        days = [k[-3:] for k in DOW_KEYS if (_num(cfg.get(k)) or 0.0) != 0.0]
+        days = [k[-3:] for k in DOW_KEYS if (to_number(cfg.get(k)) or 0.0) != 0.0]
         return ",".join(days) if days else "none"
     if rule == "custom_seasonal_profile":
         profile = cfg.get("custom_seasonal_profile") or {}
@@ -698,10 +733,10 @@ def rule_window(rule: str, cfg: dict) -> str:
 
 def rule_value(rule: str, cfg: dict) -> str:
     if rule == "day_of_week_adjustment":
-        return " ".join(f"{k[-3:]}={_num(cfg.get(k)) or 0.0:g}" for k in DOW_KEYS)
+        return " ".join(f"{k[-3:]}={to_number(cfg.get(k)) or 0.0:g}" for k in DOW_KEYS)
     for key in ("last_min_factor_value", "far_out_premium_value"):
         if key in cfg:
-            value = _num(cfg.get(key))
+            value = to_number(cfg.get(key))
             return "-" if value is None else f"{value:g}"
     return "-"
 
@@ -1175,12 +1210,12 @@ def merge_dow(current: dict, changes: dict) -> dict:
         if key in changes:
             out[key] = changes[key]
         else:
-            out[key] = _num(current.get(key)) or 0.0
+            out[key] = to_number(current.get(key)) or 0.0
     return out
 
 
 def _in_range(value, bounds, label, errors):
-    number = _num(value)
+    number = to_number(value)
     if number is None:
         errors.append(f"{label}: {value!r} is not a number")
         return
@@ -1212,7 +1247,7 @@ def validate(customizations: dict) -> list[str]:
         elif rule == "last_minute_prices" and cfg.get("last_min_factor_on"):
             kind = cfg.get("last_min_factor_type")
             if kind in ("linear", "linear_gradual", "fixed"):
-                value = _num(cfg.get("last_min_factor_value"))
+                value = to_number(cfg.get("last_min_factor_value"))
                 if value is None:
                     errors.append("last_minute_prices: last_min_factor_value is required "
                                   f"for type {kind}")
@@ -1288,7 +1323,7 @@ def signed_from_action(action: dict) -> tuple[float, bool]:
     value. See references/pricelabs-gotchas.md, "two sign conventions".
     """
     meta = action.get("metadata") or {}
-    recommended = _num((meta.get("recommended") or {}).get("discount_pct"))
+    recommended = to_number((meta.get("recommended") or {}).get("discount_pct"))
     if recommended is None:
         raise ValueError("action has no recommended.discount_pct")
     kind = str(action.get("action_type", ""))
