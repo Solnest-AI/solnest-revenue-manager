@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.2.0-rc8 (unreleased)
+## 4.2.0-rc9 (unreleased)
 
 - Reference pointers now fire from inside Step 4 and Step 8 instead of only from the appendix.
   The gotchas file told the reader to consult it "at Step 4 and again at Step 8", but that
