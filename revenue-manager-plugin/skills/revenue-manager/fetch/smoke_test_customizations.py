@@ -425,6 +425,200 @@ check("merge_dow preserves a live -2% Tuesday through a partial write, not zeroe
 check("merge_dow still applies the day that was actually changed",
       live_merged["dow_factor_value_sat"] == 20.0, f"got {live_merged['dow_factor_value_sat']}")
 
+# --- customization_write: fix round 1 (coordinator review, Groups A-D) -----------
+# Independently re-verified against the shipped module before implementing any fix (see
+# the fix report). All ten findings reproduced as described, with one correction: the
+# literal claim that listing_id="../../x" "escapes out_dir" did not reproduce -- it
+# raised FileNotFoundError instead (the "snapshot_" prefix glued onto the crafted value
+# breaks a clean ".." path component in every craft tried). The underlying concern is
+# still real (an unsanitized listing_id can crash write_snapshot in a confusing way) so
+# the sanitization fix ships anyway; see the fix report for the full evidence.
+
+# Group A: validate() must not return [] for the exact failures it exists to prevent.
+# These four payloads are the coordinator's own, used verbatim.
+check("A1: a partial day-of-week write (Fri only, no toggle restated) is rejected",
+      cw.validate({"day_of_week_adjustment": {"dow_factor_value_fri": 20.0}}),
+      "THE MEASURED WIPE: 6 unstated days would reset to 0 on a live calendar")
+check("A2: an out-of-range last-minute value/dfd is rejected even with no toggle stated",
+      cw.validate({"last_minute_prices": {"last_min_factor_value": -80,
+                                          "last_min_factor_dfd": 900}}),
+      "-80 exceeds the 75-point discount cap and 900 exceeds the 90-day dfd cap")
+check("A4: last_min_factor_type='fix' (the far_out enum) is rejected -- INVERSE ENUM TRAP",
+      cw.validate({"last_minute_prices": {"last_min_factor_value": -20,
+                                          "last_min_factor_dfd": 14,
+                                          "last_min_factor_type": "fix"}}),
+      "last_minute_prices uses `fixed`; `fix` is the far_out_premium spelling")
+check("A(4th payload): a stray dow_factor_value_* key survives seven valid days undetected no more",
+      cw.validate({"day_of_week_adjustment": dict(
+          RULES["day_of_week_adjustment"], dow_factor_value_monday=-80.0)}),
+      "the typo key is not one of the seven canonical DOW_KEYS and must not be invisible")
+
+# A3: an unknown or missing far_out_premium_type used to silently skip every check.
+check("A3: far-out value 9999 and start -50 are rejected when the type is missing",
+      cw.validate({"far_out_premium": {"far_out_premium_value": 9999,
+                                       "far_out_premium_start": -50}}),
+      "a missing type used to skip range checks entirely, not just the type check")
+
+# A3/design correctness: a market-driven type is a legitimate, real PriceLabs value (see
+# attribution.MARKET_DRIVEN) and must NOT be flagged as "unknown" just because it carries
+# no numeric field to range-check. Written to guard the else-branch added for A3 from
+# becoming a new false positive.
+check("a market-driven far_out_premium_type ('recommended') is not flagged as unknown",
+      not cw.validate({"far_out_premium": {"far_out_premium_type": "recommended"}}),
+      f"got {cw.validate({'far_out_premium': {'far_out_premium_type': 'recommended'}})}")
+check("a market-driven last_min_factor_type ('conservative') is not flagged as unknown",
+      not cw.validate({"last_minute_prices": {"last_min_factor_type": "conservative"}}))
+
+# a genuinely unrecognized type (not the enum trap, not market-driven, not a real type)
+# must still be caught -- this is what A3's else branch is actually for
+check("a genuinely unknown far_out_premium_type is rejected",
+      cw.validate({"far_out_premium": {"far_out_premium_type": "moonbeam",
+                                       "far_out_premium_value": 5}}),
+      "the else branch added for A3 must still fire on real garbage")
+
+# --- Group B: echo_diff must not be blind to a per-day inversion -----------------
+fixture_effective = ("Mon -10% discount, Tue -10% discount, "
+                     "Fri +15% premium, Sat +15% premium")
+
+# the coordinator's own reproduction: one string, two opposite intents, both silent
+down_whole = cw.echo_diff({"direction": "down", "magnitude": 15}, {"effective": fixture_effective})
+up_whole = cw.echo_diff({"direction": "up", "magnitude": 15}, {"effective": fixture_effective})
+check("B1: a mixed-sign block no longer satisfies both opposite intents at once "
+      "(at least one of down/up must be non-empty against magnitude 15)",
+      bool(down_whole) or bool(up_whole),
+      f"down={down_whole} up={up_whole} -- before the fix both were []")
+
+# scoped to the day that actually changed: Friday is a premium, not a discount
+check("B1: echo_diff scoped to Fri catches a discount intent against an actual Fri premium",
+      cw.echo_diff({"direction": "down", "magnitude": 15, "day": "Fri"},
+                   {"effective": fixture_effective}),
+      "before the fix, Mon/Tue's 'discount' text masked Friday's actual inversion")
+check("B1: echo_diff scoped to Fri is silent when the intent (premium) matches",
+      not cw.echo_diff({"direction": "up", "magnitude": 15, "day": "Fri"},
+                       {"effective": fixture_effective}))
+check("B1: echo_diff scoped to Mon is silent when the intent (discount) matches",
+      not cw.echo_diff({"direction": "down", "magnitude": 10, "day": "Mon"},
+                       {"effective": fixture_effective}))
+check("B1: echo_diff scoped to Mon catches a premium intent against an actual Mon discount",
+      cw.echo_diff({"direction": "up", "magnitude": 10, "day": "Mon"},
+                   {"effective": fixture_effective}))
+check("B1: echo_diff reports a day it cannot find in the effective text, rather than "
+      "silently passing",
+      cw.echo_diff({"direction": "down", "magnitude": 10, "day": "Wed"},
+                   {"effective": fixture_effective}),
+      "Wednesday has no entry in this fixture at all")
+check("B1: without a day, echo_diff still falls back to whole-block matching for a "
+      "single-statement rule (last_minute/far_out shape, no per-day breakdown)",
+      not cw.echo_diff({"direction": "down", "magnitude": 10},
+                       {"effective": "up to 10% discount starting 7 days from check-in"}))
+
+# B2: a direction that is neither "down" nor "up" used to skip every check and return []
+check("B2: echo_diff rejects an unrecognized direction rather than silently passing a "
+      "literal inversion",
+      cw.echo_diff({"direction": "sideways", "magnitude": 10}, {"effective": "Mon 10% premium"}),
+      "direction='sideways' used to make every branch a no-op and return []")
+
+# --- Group C: the kill switch -----------------------------------------------------
+import os  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+import datetime as _datetime_module  # noqa: E402
+
+# C1: snapshot_payload must deep-copy, not alias, current
+c1_source = {"day_of_week_adjustment": {"dow_factor_value_mon": -10.0}}
+c1_snap = cw.snapshot_payload("cz-listing1", "smartbnb", c1_source)
+c1_source["day_of_week_adjustment"]["dow_factor_value_mon"] = 999.0
+check("C1: snapshot_payload deep-copies current -- mutating the source afterward does "
+      "not change the snapshot",
+      c1_snap["customizations"]["day_of_week_adjustment"]["dow_factor_value_mon"] == -10.0,
+      f"got {c1_snap['customizations']['day_of_week_adjustment']['dow_factor_value_mon']}, "
+      "want -10.0 -- a live reference would let the rollback restore the BROKEN state")
+
+# C2: write_snapshot needs real coverage -- round trip, atomic write, no clobber, no
+# path escape. Zero of this existed before fix round 1.
+with _tempfile.TemporaryDirectory() as c2_tmp:
+    c2_payload = cw.snapshot_payload("cz-listing2", "smartbnb",
+                                     {"day_of_week_adjustment": {"dow_factor_value_mon": -5.0}})
+    c2_path = cw.write_snapshot(c2_payload, c2_tmp)
+    check("write_snapshot returns a path that exists", os.path.isfile(c2_path))
+    check("write_snapshot leaves no stray .tmp file behind after a clean write",
+          not os.path.exists(c2_path + ".tmp"))
+    c2_roundtrip = json.load(open(c2_path))
+    check("write_snapshot round-trips the exact payload (the rollback restores exactly "
+          "what was snapshotted)",
+          c2_roundtrip == c2_payload, f"got {c2_roundtrip}")
+
+    # force a deterministic same-instant collision by freezing the module's clock --
+    # two real calls microseconds apart would almost never collide on their own, which
+    # would make this test flaky rather than a real guarantee
+    class _FrozenDatetime(_datetime_module.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _datetime_module.datetime(2026, 1, 1, 12, 0, 0, 0, tzinfo=tz)
+
+    _real_datetime = cw.datetime
+    cw.datetime = _FrozenDatetime
+    try:
+        c2_frozen_payload = cw.snapshot_payload("cz-frozen", "smartbnb", {"x": 1})
+        c2_first_path = cw.write_snapshot(c2_frozen_payload, c2_tmp)
+        collision_exc = None
+        try:
+            cw.write_snapshot(c2_frozen_payload, c2_tmp)
+        except FileExistsError as exc:
+            collision_exc = exc
+        check("a second write at the identical microsecond raises, never overwrites",
+              collision_exc is not None,
+              "write_snapshot must refuse to clobber an existing snapshot file")
+        check("the collision raises a clear operator-facing message, not a bare OS error",
+              collision_exc is not None and "must not proceed" in str(collision_exc),
+              f"got: {collision_exc}")
+        check("the original snapshot is unchanged after the refused second write",
+              json.load(open(c2_first_path)) == c2_frozen_payload)
+    finally:
+        cw.datetime = _real_datetime
+
+    # sanitization: a crafted listing_id must never change which directory the file
+    # lands in, whatever the exact OS-level failure mode of the unsanitized version was
+    c2_traversal_payload = cw.snapshot_payload("../../x", "smartbnb", {})
+    c2_traversal_path = cw.write_snapshot(c2_traversal_payload, c2_tmp)
+    check("a crafted listing_id cannot change which directory write_snapshot writes into",
+          os.path.dirname(os.path.abspath(c2_traversal_path)) == os.path.abspath(c2_tmp),
+          f"got {c2_traversal_path}")
+    check("write_snapshot succeeds (no confusing crash) on a crafted listing_id",
+          os.path.isfile(c2_traversal_path))
+
+# --- Group D: merge_dow ------------------------------------------------------------
+# D1: an absent dow_factor_on must not silently default to True (or False) -- raise.
+try:
+    cw.merge_dow({}, {"dow_factor_value_mon": -10.0})
+    d1_raised = False
+except ValueError:
+    d1_raised = True
+check("D1: merge_dow refuses to guess an absent dow_factor_on rather than defaulting "
+      "it to True",
+      d1_raised,
+      "a missing toggle silently defaulting to True would enable a rule with no evidence")
+
+# D2: the toggle round-trip must be proven both ways, not just the True fixture value --
+# the original test passed identically against a version that hardcoded True.
+d2_off_current = dict(RULES["day_of_week_adjustment"], dow_factor_on=False)
+d2_off_merged = cw.merge_dow(d2_off_current, {"dow_factor_value_fri": 5.0})
+check("D2: merge_dow preserves an explicit dow_factor_on=False, not just True",
+      d2_off_merged["dow_factor_on"] is False,
+      f"got {d2_off_merged['dow_factor_on']}; the old test only ever proved True round-trips")
+
+# D3: an unrecognized key in `changes` must raise, not vanish silently. Reproduces the
+# coordinator's exact typo ('_monday' vs '_mon') through the real merge_dow, the layer
+# that is supposed to prevent this shape from ever reaching validate() at all.
+try:
+    cw.merge_dow(RULES["day_of_week_adjustment"], {"dow_factor_value_monday": -80.0})
+    d3_raised = False
+except ValueError:
+    d3_raised = True
+check("D3: merge_dow raises on an unrecognized key in changes rather than dropping it",
+      d3_raised,
+      "a typo'd key would otherwise vanish silently: not applied, not flagged, and "
+      "invisible to validate() too -- a successful write that changed nothing")
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:
