@@ -391,6 +391,45 @@ pickup and STLY, by month plus trailing 365/730). ~14,000 tokens at 365 days, ~4
 Read `listings_used=` from the header and feed it to the thin-comp transparency guard (2.3).
 Always report N. Exit **2 means "market unverified this run"**, never "no market".
 
+### Step 4c — The customization stack (the rules that produced the curve)
+
+**Do not call `get_customizations` directly.** Run the reducer, once per listing:
+
+```bash
+cd <plugin>/skills/revenue-manager/fetch
+python3 reduce_customizations.py --listing <id> --pms <pms>
+```
+
+It prints five sections: `## rules`, `## profiles`, `## actions`, `## nudges`, `## logs`.
+Exit 2 means the stack could not be read this run. **Say so. Never report a listing as
+having no customizations because the call failed.**
+
+**Why this exists.** Every price you read in Step 4.0 is the output of six rules you
+otherwise cannot see. Measured on a live account: one listing had 9 floor-pinned dates,
+7 of them on the two weekdays carrying a -10% day-of-week rule, and the analysis argued
+about the minimum price instead. A second listing read "off" on every lever and ran a
+40% same-day discount.
+
+**`toggled_on=false` is not optional and the reducer sets it.** The default response omits
+every rule whose toggle is off. On a live listing that meant 4 rules returned instead of 6,
+and one of the two hidden rules held a dormant custom seasonal profile with real season
+values in it. **A rule showing `OFF` in the table is not neutral:** switching a rule off
+hands the date back to the algorithm's market-driven default.
+
+**The cache is deliberately long.** Customizations were unchanged over 18 days on a live
+account while override state decayed 846 dates in 12. The reducer's TTL is 7 days. Pass
+`--no-cache` when you have reason to think a rule just changed, and check the `## logs`
+section, which tells you whether it did.
+
+**Read `## actions` before forming your own diagnosis.** That is PriceLabs' own issue list
+per listing: missing base price, occupancy adjustments off, last-minute or min-stay off
+market, too many blocked dates. Report both yours and theirs. Where they agree, confidence
+is high. Where they disagree, say so plainly. Never silently override the vendor.
+
+**`## logs` is the only view of changes made outside this skill.** The Supabase audit trail
+records only what this skill did. An operator who edited a base price in the PriceLabs
+dashboard is invisible to it. Step 7's "prior attempts" line reads this section.
+
 ## Step 4.8 — Named comps via the reducer, never the raw MCP (AirROI, optional)
 
 (Why: `references/evidence.md`, AirROI.)
@@ -521,6 +560,72 @@ Rules:
 - A stable ratio other than 1.0 (stdev under 5%) means the PMS itself scales the calendar; store it as `property_config.settings.sync_ratio`, report it, and keep NET = the PMS calendar price for every comparison.
 - Drift dates (ratio off by more than 5%, or min-stay disagreeing) are sync defects: exclude them from pricing this run and name them in the report. **Never recommend a price change to "fix" a drift date**; the fix is the sync.
 
+## Step 5.5 — Attribute the layer before you name a lever
+
+**A price complaint is a layer question before it is a number question.** Work out which
+layer produced the behaviour, then propose the lever that owns that layer. Changing a
+number at the wrong layer is the failure this step exists to prevent.
+
+`ce = price / uncustomized_price` is the total effect of the customization stack on a
+date, and it is exact: a listing with every rule off returns 1.000 on all seven weekdays.
+`fetch/attribution.py` computes it and groups it by weekday, lead time and month.
+
+| Symptom | Layer that could own it | Evidence that decides |
+|---|---|---|
+| Date pinned at the floor | base, a rule pushing down, or the min itself | `ce` on that date, and whether a rule's window covers it |
+| Same-day collapse | last minute, on or off-and-market-driven | `ce` by days to check-in, plus the effective string |
+| One weekday systematically low | day of week | `ce` grouped by weekday |
+| Far dates flat or high | far-out premium | `ce` by days out |
+| A whole season wrong | seasonality or the custom profile | `ce` by month vs the neighborhood's seasonal shape |
+| Price ignores the market | demand factor | `ce` variance vs neighborhood variance |
+| One date odd, neighbours fine | override | the Step 4 override reducer row |
+| PMS disagrees with PriceLabs | sync | the Step 4.9 ratio. **Never fix this with a price** |
+| Guest sees a different number | channel markup | Step 3.2 |
+
+### The co-incidence test
+
+**`ce` is exact in total and does NOT decompose per rule.** Several rules overlap the same
+date and the far-out premium covers most of a 365-day window. So every attribution carries
+a verdict, and `attribution.classify()` produces it:
+
+- **confirmed** — the rule covers every affected date and no unaffected date, and its
+  direction matches the effect.
+- **candidate** — it covers some affected dates in the right direction but also covers
+  dates that were not affected.
+- **excluded** — it covers none of them, or it moves prices the other way.
+
+A market-driven rule type (`recommended`, `conservative`, `aggressive`) has no readable
+sign in its config, so it can never be confirmed.
+
+**Never write "the day-of-week rule cost you 10% on this date."** Write "these dates run
+12% under the uncustomized price, three rules cover them, I cannot separate them."
+
+### Before proposing a rule change
+
+A rule change moves every date in its window, forward, until someone changes it back.
+
+1. **Count and name the blast radius**: dates in the horizon the window covers, and how
+   many are open.
+2. **The pattern must hold.** One bad Tuesday is not a day-of-week problem.
+3. **Compare occupancy inside the window against outside it.** If those dates are booking
+   fine, the rule is working.
+
+### The lever ladder
+
+Prefer the smallest instrument that fixes the diagnosed layer:
+
+1. **Accept a nudge** (Step 4c `## nudges`). One listing, one field, a vendor-generated value.
+2. **Date override.** Bounded and obviously reversible.
+3. **Bounds**, min or max.
+4. **Base price.**
+5. **One customization rule.**
+6. **Custom seasonal profile.** A write replaces the entire stored season set.
+7. **Account level, group level, or a shared profile.** A portfolio change, and **out of
+   scope for this version**: surface it, explain it, never write it.
+
+**One lever per diagnosis per run.** Never a rule change and a base change on the same
+symptom in the same run, or nothing downstream can attribute which one worked.
+
 ## Step 6 — Apply the STR revenue framework
 
 Read `references/framework.md` NOW, in full, before writing a single recommendation. It carries the Revenue Flywheel, the Pricing Stack, lead-time logic, the 5-question decision framework, the 30-day review, the red-flag table (including the rule that a floor-pinned listing cannot be fixed by cutting price), comp-set discipline and the KPI targets. Every recommendation in Step 7 must cite which of its rules it applied.
@@ -531,13 +636,18 @@ Structure each recommendation through the approval-gate shape (2.6), with framew
 ```
 Property:        <name>  (<currency>)
 Change:          <field> from <old (PMS calendar = ground truth)> to <new>   (<+/- % move>)
+Layer:           <base | bounds | customization:<rule> | override | sync | markup>
+                 <confirmed | candidate>: <why, from Step 5.5>
+Blast radius:    <N dates in the horizon, M of them open>   <"this date only" for an override>
 Nearest bound:   min <min> / max <max>   <flag if outside or within 5%>
 Comp count:      <N>  (<same-bedroom subset>)
 Net / Ask / Cleared: net <calendar> / ask(airbnb) <net x (1+markup)> / cleared ADR <realized>
 Reasoning:       <plain-language inputs — comps, pacing/STLY, events, lead time, orphan>
-Prior attempts:  <from pricelabs_change_log, if any>
+Prior attempts:  <from Step 4c `## logs` AND pricelabs_change_log, if any>
+Vendor says:     <matching row from Step 4c `## actions`, or "no action raised">
 Expected impact: <occupancy % / RevPAR direction>
-Flags:           <large-move / thin-comp / currency / stale-data / out-of-bound, if any>
+Flags:           <large-move / thin-comp / currency / stale-data / out-of-bound /
+                  unconfirmed-attribution, if any>
 ```
 Then **wait for explicit approval.** Recommend-only — no write without it.
 
@@ -560,6 +670,51 @@ When the user approves specific changes:
    - **Pricing tool:** `pricelabs_update_listings` (base/min/max) or `pricelabs_set_overrides` (DSOs). For Wheelhouse/Beyond, use their detected update/custom-rate tools.
    - **Or the detected PMS's calendar-update tool** (see the "calendar write tool" column in the PMS field reference — e.g. `hostaway_*`, `lodgify_*`, `smoobu_*`, OwnerRez, etc.; Hospitable's is `hospitable_update_property_calendar`).
    - **Hospitable write-path unit (gate to Hospitable):** the read calendar (`hospitable_get_property_calendar` → `price.amount`) is in **cents** — divide by 100. The write tool (`hospitable_update_property_calendar`) takes `price` as a plain **nightly price number in dollars**. So: read in cents, write in dollars. Convert before push, and **pre-push assert** the pushed dollar value is within the listing min/max in native dollars (a sane $50–$5,000-ish range) before sending — this catches a 100× error before it hits the calendar.
+   - **Customization rules follow their own path.** Never hand-compose one. In order:
+
+     1. **Snapshot.** `customization_write.snapshot_payload()` then `write_snapshot()`.
+        Record the returned path; it is the rollback and it goes in the audit row.
+        Rolling back is re-POSTing that file, unchanged.
+     2. **Merge to a full object.** For day of week, `customization_write.merge_dow()`.
+        **Days omitted from a write reset to 0, they do not keep their previous value.**
+        For `custom_seasonal_profile`, send every season: a write replaces the whole set.
+     3. **Validate.** `customization_write.validate()`. A non-empty return means do not
+        send. **PriceLabs rejects the whole request over one bad value — there is no
+        partial credit.** A stale or malformed field you didn't mean to touch kills the
+        fields you actually wanted changed too. Fix or drop the offending field and
+        re-validate; never assume PriceLabs applies the good keys and skips the bad one.
+     3b. **Check for destructive-but-legal writes.** `customization_write.destructive_warnings()`.
+        This is a SEPARATE channel from `validate()` and a non-empty return is **not** a
+        blocker: the write is legal and PriceLabs returns 200. It means the write DESTROYS
+        stored configuration. Toggling `last_minute_prices` or `far_out_premium` off resets
+        their stored config, and a `custom_seasonal_profile` write replaces the entire season
+        set. Surface every warning at the approval gate in the operator's own words and get
+        an explicit yes before sending. Skipping this call is how the loss happens silently.
+     4. **Send** the approved change through `update_customizations`.
+     5. **Echo check, mandatory.** Re-read the rule and run
+        `customization_write.echo_diff()`. **The sign is accepted either way**, because a
+        premium is a legitimate setting, so a 200 does not mean the write did what you
+        meant. Only the `effective` block proves the direction. **For a day-of-week
+        write, pass the day in `intent["day"]`** (e.g. `"fri"`) — a dow rule's
+        `effective` string lists all seven days in one block, discounts and premiums
+        mixed together, so without a day `echo_diff` cannot isolate the one you changed
+        and reports the mixed block as unconfirmable rather than guess which day you
+        meant. If `echo_diff` returns anything, say so immediately and offer the rollback.
+
+   - **To suppress a rule, send its type `none`** (or `no demand factor` for the demand
+     factor) **with the toggle ON.** Switching the toggle off is not suppression: it hands
+     the date to the market-driven default, and it **resets** the stored config for
+     last-minute and far-out.
+   - **Never write from an action's `recommended` value without negating it first.**
+     `get_actions` uses two conventions in one object: `current.discount_pct` is the stored
+     signed value, `recommended.discount_pct` is a positive magnitude.
+     `customization_write.signed_from_action()` handles it and returns `confirmed=False`,
+     because the convention is inferred and not proven. **Do not auto-apply an unconfirmed
+     value.** See `references/pricelabs-gotchas.md`.
+   - **Out of scope in this version:** account-level and group-level customizations, group
+     overrides, and shared min-stay profiles. Surface them and explain them. Do not write
+     them. A shared profile is an account object and changing it changes every listing
+     attached to it.
 3. Confirm a successful response.
 4. **Write the audit trail to Supabase** (Step 9).
 5. Present a before → after summary.

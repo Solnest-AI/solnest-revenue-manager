@@ -14,6 +14,24 @@ VALUES
 ```
 One row per individual field change (base, min, max, a bound override, and each DSO/override date counts as its own row).
 
+**For a customization change**, `change_type` is `customization`, `field_changed` is the
+rule name (for example `day_of_week_adjustment`), and `notes` MUST carry three things:
+
+- the **layer verdict** from Step 5.5, `confirmed` or `candidate`, and which rules were
+  candidates if it was not confirmed
+- the **blast radius** that was shown at the approval gate
+- the **snapshot path** returned by `customization_write.write_snapshot()`, because that
+  file is the rollback
+
+```
+notes: "layer=customization:day_of_week_adjustment verdict=confirmed
+        blast=104 dates (61 open) snapshot=~/.cache/revenue-manager/snapshots/snapshot_ab12cd34_20260918T204501Z.json
+        echo=ok"
+```
+
+Without the snapshot path the change is not reversible by anyone who was not in the
+session. Treat a missing path as a failed audit write.
+
 ### Per property per decision → 1 row in `pricing_decisions` (outcome columns nullable, seeded null)
 ```sql
 INSERT INTO pricing_decisions
