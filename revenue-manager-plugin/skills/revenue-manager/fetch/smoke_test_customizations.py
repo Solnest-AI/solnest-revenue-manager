@@ -121,6 +121,36 @@ check("off day-of-week is NOT confirmed (unknown direction caps at candidate)",
       res_off["day_of_week_adjustment"]["verdict"] != "confirmed",
       f"got {res_off['day_of_week_adjustment']['verdict']}")
 
+# --- reduce_customizations: normalization -----------------------------------
+import reduce_customizations as rc  # noqa: E402
+
+norm = {r["rule"]: r for r in rc.normalize_rules(RULES)}
+check("all six rules normalize, including the off ones", len(norm) == 6,
+      f"got {sorted(norm)}")
+check("an OFF rule is flagged in upper case so it cannot be skimmed past",
+      norm["seasonality"]["toggle"] == "OFF", f"got {norm['seasonality']['toggle']!r}")
+check("an ON rule reads lower case", norm["demand_factor"]["toggle"] == "on")
+check("the day-of-week value lists all seven days",
+      norm["day_of_week_adjustment"]["value"].count("=") == 7,
+      f"got {norm['day_of_week_adjustment']['value']!r}")
+check("the last-minute window is expressed in days from check-in",
+      norm["last_minute_prices"]["window"] == "<=14d",
+      f"got {norm['last_minute_prices']['window']!r}")
+check("the far-out window is expressed as days out",
+      norm["far_out_premium"]["window"] == ">=180d",
+      f"got {norm['far_out_premium']['window']!r}")
+check("the effective string is carried through verbatim",
+      "discount" in norm["last_minute_prices"]["effective"])
+check("a dormant seasonal profile reports its stored season count",
+      "2 seasons" in norm["custom_seasonal_profile"]["window"],
+      f"got {norm['custom_seasonal_profile']['window']!r}")
+
+# a rule with no effective block must not silently render as empty
+bare = {"demand_factor": {"tone_demand_factor_on": True, "tone_demand_factor": "recommended"}}
+check("a missing effective block renders as an explicit marker, never blank",
+      rc.normalize_rules(bare)[0]["effective"] == "(no effective block returned)",
+      f"got {rc.normalize_rules(bare)[0]['effective']!r}")
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:
