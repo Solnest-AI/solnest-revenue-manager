@@ -7,8 +7,8 @@
     {
       "name": "revenue-manager",
       "source": "./revenue-manager-plugin",
-      "description": "Release candidate: adds the Step 4.0 payload reducer (fetch/reduce_prices.py), cutting a per-listing PriceLabs pull from ~462k to ~200 tokens, plus fixes for the Booked (Check-In), empty-STLY, and -1/-2 sentinel traps.",
-      "version": "4.2.0-rc9"
+      "description": "Release candidate: adds the PriceLabs customization layer. Step 4c reads the six pricing rules (toggled-off included), shared profiles, actions, nudges and the PriceLabs change log through one reducer. Step 5.5 attributes an observed price to a layer before any lever is named. Step 8 gains a validated customization write path: snapshot, merge, range checks, send, mandatory echo check.",
+      "version": "4.2.0-rc10"
     }
   ],
   "description": "Solnest Revenue Manager: recommend-only STR pricing analysis with a PMS reconciliation gate, PriceLabs payload reducer, and a Supabase audit trail."

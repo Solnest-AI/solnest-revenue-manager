@@ -1,5 +1,51 @@
 # Changelog
 
+## 4.2.0-rc10 (unreleased)
+
+- **The customization layer.** Step 4c pulls the six pricing rules through one reducer
+  (`reduce_customizations.py`): `toggled_on=false` and all, since the default response hides
+  every rule that is switched off, including a dormant profile still holding real season
+  values. Same call also returns the shared profiles, `get_actions`, pending nudges and the
+  PriceLabs change log. Exit 2 means the stack could not be read this run, never "no
+  customizations."
+- **Step 5.5 attributes an observed price to the layer that produced it before any lever is
+  named.** `attribution.py`'s `ce` (`price / uncustomized_price`, exact in total, never
+  decomposed per rule) feeds a co-incidence test against each rule's covered dates, with a
+  three-way verdict: `confirmed` (covers every affected date and no other, correct
+  direction), `candidate` (covers some, but also covers dates it shouldn't, or its direction
+  can't be read), or `excluded` (covers none, or moves prices the wrong way). A market-driven
+  rule type has no readable sign and can never reach `confirmed`.
+- Step 7's approval card gains `Layer:`, `Blast radius:` and `Vendor says:` lines. `Prior
+  attempts:` reads Step 4c's `## logs`; `Vendor says:` reads its `## actions`.
+- **Step 8 gains the customization write path:** snapshot (deep-copied, so mutating the
+  source after snapshotting can't corrupt the rollback), full-object merge, range and
+  completeness validation, then a mandatory echo check after sending. `destructive_warnings()`
+  is a separate, non-blocking channel from `validate()`: toggling `last_minute_prices` or
+  `far_out_premium` off is a legal write that `validate()` correctly lets through, but it also
+  resets that rule's stored configuration, and nothing else would have surfaced that. Account-
+  level, group-level and shared-profile writes stay out of scope this version: surfaced,
+  explained, never written.
+- `attribution.py` parses customization config fields through a second function,
+  `to_setting()`, kept separate from the existing `to_number()`. `-1`/`-2` are PriceLabs'
+  "no value" sentinel on *price* fields, but a real in-range day-of-week or discount
+  percentage on *customization* fields; reading a live -1% Monday through the price parser
+  silently dropped it, and a read-modify-write over that reading would have zeroed it on
+  send.
+- Per-field enum constants (separate lists for last-minute, far-out, seasonality and demand
+  factor) replace a shared superset that had been validating all four `*_type` fields against
+  the same list. `moderately_conservative`/`moderately_aggressive` are only valid on
+  seasonality and demand-factor, not last-minute or far-out, and the shared list let an
+  invalid value through on the wrong field.
+- New: `fetch/attribution.py`, `fetch/reduce_customizations.py`, `fetch/customization_write.py`,
+  and a `customizations` fact class in `factcheck.py`. The offline suite grows from 94 checks
+  to 348: `smoke_test.py` unchanged at 94, `smoke_test_customizations.py` new at 254.
+- `references/pricelabs-mcp.md`: `get_actions` and `get_user_logs` were still marked
+  `(unused)` from before Step 4c existed. Both are read by the reducer now (`GET /v1/actions`,
+  `POST /v1/logs`), so the markers were stale; removed, and their Step column corrected to
+  `4c` and `4c / 7`.
+- Plan: `docs/superpowers/plans/2026-09-18-pricelabs-customization-layer.md`.
+  Spec: `docs/superpowers/specs/2026-09-18-pricelabs-customization-layer-design.md`.
+
 ## 4.2.0-rc9 (unreleased)
 
 - Reference pointers now fire from inside Step 4 and Step 8 instead of only from the appendix.

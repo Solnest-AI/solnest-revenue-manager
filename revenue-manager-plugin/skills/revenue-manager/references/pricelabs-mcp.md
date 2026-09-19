@@ -81,7 +81,7 @@ The whole group is unused, and it overlaps heavily with analysis the runbook doe
 
 | Tool | W | Step | Use |
 |---|---|---|---|
-| `get_actions` | | 4 | **Active issues PriceLabs raises per listing**: missing base price / location / bedrooms, occupancy adjustments off, min-stay or last-minute off market, too many blocked or unbookable dates, price recommendations. The cheapest "what needs attention" call in the API. **(unused)** |
+| `get_actions` | | 4c | **Active issues PriceLabs raises per listing**: missing base price / location / bedrooms, occupancy adjustments off, min-stay or last-minute off market, too many blocked or unbookable dates, price recommendations. The cheapest "what needs attention" call in the API. |
 | `get_listing_health_and_recommendations` | | 4 | Pulse, health status, recommendation section. Primary per-listing diagnostic. **(unused)** |
 | `diagnose_no_bookings` | | 4 | Deep setup diagnosis for a listing with no recent bookings and low forward occupancy. Directly relevant to a floor-pinned, non-converting listing. **(unused)** |
 | `get_listing_performance_metrics` | | 4 | Raw ADR, revenue, occupancy, RevPAR. |
@@ -104,7 +104,7 @@ The whole group is unused, and it overlaps heavily with analysis the runbook doe
 | `get_report_builder_templates` | | 7.5 | Saved and canned report templates. **(unused)** |
 | `get_report_builder_data` | | 7.5 | Start a template run; returns a `request_id`. **(unused)** |
 | `poll_report_builder_data` | | 7.5 | Poll until `report_data` appears. Could replace the hand-built workbook. **(unused)** |
-| `get_user_logs` | | 3 | **Activity log: pricing changes, sync toggles, DSOs, by team member and date.** This is the audit trail PriceLabs already keeps, and it answers "who changed this and when" without Supabase. **(unused)** |
+| `get_user_logs` | | 4c / 7 | **Activity log: pricing changes, sync toggles, DSOs, by team member and date.** This is the audit trail PriceLabs already keeps, and it answers "who changed this and when" without Supabase. |
 
 ## What this portfolio is not using
 
