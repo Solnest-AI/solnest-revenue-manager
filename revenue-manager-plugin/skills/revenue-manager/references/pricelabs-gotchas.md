@@ -86,9 +86,13 @@ writing any client. Endpoint field detail is in `pricelabs-api/`; tool list in `
   legitimate setting. It becomes a live guest-facing price change that returns success. Check the
   `effective` echo after every write: "15% discount" and "15% premium" are both valid responses to
   the same number.
-- **A write is all-or-nothing across every key in the call.** One invalid value rejects the whole
-  request. Partial knowledge is worse than none: the keys you understood still apply alongside the
-  one you did not.
+- **An invalid value (out of range, wrong enum) rejects the WHOLE request.** Nothing in
+  the call applies, not even the keys you got right.
+- **A valid-but-wrong value is the opposite, more dangerous failure: the request
+  SUCCEEDS.** A key that passes range/type checks but carries a stale or unintended value
+  (for example, an old day carried forward unchanged through a full-object merge) applies
+  right alongside the keys you actually meant to change. Passing validation is not the
+  same as being correct.
 - **Toggling off RESETS the stored config** for `last_minute_prices` (to type `linear`, value 0)
   and `far_out_premium` (to value 0 / start 999). Re-enabling needs the full configuration again.
   Seasonality and day-of-week keep their stored values.

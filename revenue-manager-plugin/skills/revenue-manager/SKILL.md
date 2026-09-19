@@ -594,8 +594,30 @@ a verdict, and `attribution.classify()` produces it:
   dates that were not affected.
 - **excluded** — it covers none of them, or it moves prices the other way.
 
-A market-driven rule type (`recommended`, `conservative`, `aggressive`) has no readable
-sign in its config, so it can never be confirmed.
+**Compute the verdict, never assert it.** `attribution.py` is a pure function library —
+no `argparse`, nothing to run from the shell. Call it from Python:
+
+```python
+import attribution as at
+
+# price_rows: the per-date rows reduce_prices.py's Tier A table is built from
+# (date / price / uncustomized_price, straight from get_listing_prices).
+# rules: the dict behind Step 4c's `## rules` section (data["rules"]["customizations"]
+# in reduce_customizations.py, keyed by rule name).
+rows = at.ce_rows(price_rows, today)                   # today = "YYYY-MM-DD"
+affected = {r["date"] for r in rows if r["ce"] < 1.0}   # the dates you're explaining
+verdicts = at.classify(affected, rows, rules)
+for v in verdicts:
+    print(v["rule"], v["verdict"], v["why"])
+```
+
+A `Layer:` line or an audit `notes` entry that names `confirmed` or `candidate` without
+having run this is a guess wearing the shape of an attribution, not one.
+
+A market-driven rule type (`recommended`, `conservative`, `aggressive`,
+`moderately_conservative`, `moderately_aggressive`) has no readable sign in its config, and
+neither does a rule that is toggled OFF — both can only ever reach `candidate`, never
+`confirmed`.
 
 **Never write "the day-of-week rule cost you 10% on this date."** Write "these dates run
 12% under the uncustomized price, three rules cover them, I cannot separate them."
@@ -667,14 +689,21 @@ Offer the multi-tab Excel workbook once the recommendations are presented. If th
 When the user approves specific changes:
 1. Re-confirm each change still passes the safety layer (bounds, max-delta, currency) **and the write-path unit conversion below**.
 2. Push via the detected stack's mutation tool — resolve the actual tool name from Step 0 detection, **never assume Hospitable**:
+   - **Accept a nudge via `accept_nudge`, not a hand-built customization or bound
+     write, when one is available.** The narrowest lever on the ladder (Step 5.5): one
+     listing, one field, a vendor-generated value. `nudge_id` comes from Step 4c's
+     `## nudges` section — never invent one. Payload shape:
+     `references/pricelabs-api/nudges.md`. It still clears the approval gate like every
+     other change; accepting a nudge is not exempt.
    - **Pricing tool:** `pricelabs_update_listings` (base/min/max) or `pricelabs_set_overrides` (DSOs). For Wheelhouse/Beyond, use their detected update/custom-rate tools.
    - **Or the detected PMS's calendar-update tool** (see the "calendar write tool" column in the PMS field reference — e.g. `hostaway_*`, `lodgify_*`, `smoobu_*`, OwnerRez, etc.; Hospitable's is `hospitable_update_property_calendar`).
    - **Hospitable write-path unit (gate to Hospitable):** the read calendar (`hospitable_get_property_calendar` → `price.amount`) is in **cents** — divide by 100. The write tool (`hospitable_update_property_calendar`) takes `price` as a plain **nightly price number in dollars**. So: read in cents, write in dollars. Convert before push, and **pre-push assert** the pushed dollar value is within the listing min/max in native dollars (a sane $50–$5,000-ish range) before sending — this catches a 100× error before it hits the calendar.
    - **Customization rules follow their own path.** Never hand-compose one. In order:
 
-     1. **Snapshot.** `customization_write.snapshot_payload()` then `write_snapshot()`.
-        Record the returned path; it is the rollback and it goes in the audit row.
-        Rolling back is re-POSTing that file, unchanged.
+     1. **Snapshot.** `customization_write.snapshot_payload()` then
+        `write_snapshot(payload, customization_write.SNAPSHOT_DIR)` — `out_dir` is a
+        required argument, not optional. Record the returned path; it is the rollback and
+        it goes in the audit row. Rolling back is re-POSTing that file, unchanged.
      2. **Merge to a full object.** For day of week, `customization_write.merge_dow()`.
         **Days omitted from a write reset to 0, they do not keep their previous value.**
         For `custom_seasonal_profile`, send every season: a write replaces the whole set.
@@ -683,15 +712,22 @@ When the user approves specific changes:
         partial credit.** A stale or malformed field you didn't mean to touch kills the
         fields you actually wanted changed too. Fix or drop the offending field and
         re-validate; never assume PriceLabs applies the good keys and skips the bad one.
-     3b. **Check for destructive-but-legal writes.** `customization_write.destructive_warnings()`.
+     4. **Check for destructive-but-legal writes.** `customization_write.destructive_warnings()`.
         This is a SEPARATE channel from `validate()` and a non-empty return is **not** a
-        blocker: the write is legal and PriceLabs returns 200. It means the write DESTROYS
-        stored configuration. Toggling `last_minute_prices` or `far_out_premium` off resets
-        their stored config, and a `custom_seasonal_profile` write replaces the entire season
-        set. Surface every warning at the approval gate in the operator's own words and get
-        an explicit yes before sending. Skipping this call is how the loss happens silently.
-     4. **Send** the approved change through `update_customizations`.
-     5. **Echo check, mandatory.** Re-read the rule and run
+        blocker: the write is legal and PriceLabs returns 200. **It checks exactly two
+        rules:** toggling `last_minute_prices` or `far_out_premium` OFF resets their
+        stored config. Surface every warning at the approval gate in the operator's own
+        words and get an explicit yes before sending. Skipping this call is how that loss
+        happens silently.
+
+        **It does NOT cover `custom_seasonal_profile`, and no function call does.** A
+        `custom_seasonal_profile` write always replaces the entire stored season set —
+        there is no partial-season write, so every write to it is destructive, not just a
+        toggle-off, and nothing raises this for you. Raise it yourself, every time: show
+        the operator the season set you are about to overwrite (from Step 4c's cached
+        read) and get an explicit yes before sending it.
+     5. **Send** the approved change through `update_customizations`.
+     6. **Echo check, mandatory.** Re-read the rule and run
         `customization_write.echo_diff()`. **The sign is accepted either way**, because a
         premium is a legitimate setting, so a 200 does not mean the write did what you
         meant. Only the `effective` block proves the direction. **For a day-of-week

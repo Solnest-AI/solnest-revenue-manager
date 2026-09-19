@@ -25,7 +25,7 @@ rule name (for example `day_of_week_adjustment`), and `notes` MUST carry three t
 
 ```
 notes: "layer=customization:day_of_week_adjustment verdict=confirmed
-        blast=104 dates (61 open) snapshot=~/.cache/revenue-manager/snapshots/snapshot_ab12cd34_20260918T204501Z.json
+        blast=104 dates (61 open) snapshot=~/.cache/revenue-manager/customization_snapshots/snapshot_ab12cd34_20260918T204501705289Z.json
         echo=ok"
 ```
 

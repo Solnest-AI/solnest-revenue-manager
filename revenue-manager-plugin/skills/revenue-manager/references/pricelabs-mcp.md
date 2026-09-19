@@ -30,14 +30,14 @@ prefix and different names (`pricelabs_list_listings`, `pricelabs_get_neighborho
 |---|---|---|---|
 | `get_listing_prices` | | 4.0 | The forward curve. Carries `price`, `user_price`, **`uncustomized_price`** (pre-customization, the key to attributing the stack), `min_stay`, `booking_status`, `ADR`, STLY twins, `unbookable`, and `reason`. Use the reducer, never raw. |
 | `get_listing_rate_plans` | | 4 | Rate plans on a listing. Empty on this portfolio. Named in the runbook as `pricelabs_get_rate_plans`. |
-| `get_available_nudges` | | 4 | PriceLabs' own pending base/min suggestions, with `current_value`, `suggested_value`, `reason`, `expiration`. Vendor-validated and cheap. **(unused)** |
+| `get_available_nudges` | | 4 | PriceLabs' own pending base/min suggestions, with `current_value`, `suggested_value`, `reason`, `expiration`. Vendor-validated and cheap. |
 
 ## Pricing: write
 
 | Tool | W | Step | Use |
 |---|---|---|---|
 | `update_listing_data` | W | 8 | base / min / max / tags **and `push_enabled`**. Sync on/off lives here, and switching it on starts billing that listing. |
-| `accept_nudge` | W | 8 | Apply one pending nudge. **The narrowest write in the whole API**: one listing, one field, vendor-generated value. Prefer it over a raw bound change when a matching nudge exists. **(unused)** |
+| `accept_nudge` | W | 8 | Apply one pending nudge. **The narrowest write in the whole API**: one listing, one field, vendor-generated value. Prefer it over a raw bound change when a matching nudge exists. |
 | `refresh_listing_pricing` | W | 8 | Recompute the calendar after changes, optionally with the reason breakdown. **Hard limit 3 per listing per 24h, 10 per account per minute.** Batch every change before refreshing. **(unused)** |
 | `map_listings` / `unmap_listings` | W | | Parent/child channel listings for one property. Unmapping a parent detaches the whole group. **(unused)** |
 
