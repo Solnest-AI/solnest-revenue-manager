@@ -1579,6 +1579,13 @@ In Step 8, find the numbered list item that begins `2. Push via the detected sta
      3. **Validate.** `customization_write.validate()`. A non-empty return means do not
         send. One invalid value rejects the entire request, so a partial payload is worse
         than none: the keys that were valid still apply alongside the one that was not.
+     3b. **Check for destructive-but-legal writes.** `customization_write.destructive_warnings()`.
+        This is a SEPARATE channel from `validate()` and a non-empty return is **not** a
+        blocker: the write is legal and PriceLabs returns 200. It means the write DESTROYS
+        stored configuration. Toggling `last_minute_prices` or `far_out_premium` off resets
+        their stored config, and a `custom_seasonal_profile` write replaces the entire season
+        set. Surface every warning at the approval gate in the operator's own words and get
+        an explicit yes before sending. Skipping this call is how the loss happens silently.
      4. **Send** the approved change through `update_customizations`.
      5. **Echo check, mandatory.** Re-read the rule and run
         `customization_write.echo_diff()`. **The sign is accepted either way**, because a
