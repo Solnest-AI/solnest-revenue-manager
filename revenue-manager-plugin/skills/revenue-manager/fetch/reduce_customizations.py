@@ -167,7 +167,7 @@ def normalize_rules(customizations: dict) -> list[dict]:
             "type": str(cfg.get(TYPE_KEY.get(rule, ""), "") or "-"),
             "value": rule_value(rule, cfg),
             "window": rule_window(rule, cfg),
-            "effective": effective if effective else "(no effective block returned)",
+            "effective": str(effective).replace("\n", " ") if effective else "(no effective block returned)",
         })
     return out
 
@@ -180,7 +180,7 @@ def flatten_actions(payload) -> list[list]:
             continue
         for action in entry.get("actions") or []:
             meta = action.get("metadata") or {}
-            out.append([action.get("action_type", ""), action.get("title", ""),
+            out.append([action.get("action_type", ""), str(action.get("title", "")).replace("\n", " "),
                         json.dumps(meta.get("current", {}), separators=(",", ":")),
                         json.dumps(meta.get("recommended", {}), separators=(",", ":"))])
     return out
@@ -237,7 +237,7 @@ def main() -> int:
     rules = normalize_rules(customizations)
 
     profiles_raw = (data["profiles"] or {}).get("profiles") or {}
-    profile_rows = [[kind, p.get("id"), p.get("name"), p.get("archived")]
+    profile_rows = [[kind, p.get("id"), str(p.get("name", "")).replace("\n", " "), p.get("archived")]
                     for kind, items in profiles_raw.items() for p in (items or [])]
     action_rows = flatten_actions(data["actions"])
     nudges = (data["nudges"] or {}).get("nudges") or []

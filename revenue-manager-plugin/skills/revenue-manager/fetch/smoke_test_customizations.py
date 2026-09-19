@@ -151,6 +151,13 @@ check("a missing effective block renders as an explicit marker, never blank",
       rc.normalize_rules(bare)[0]["effective"] == "(no effective block returned)",
       f"got {rc.normalize_rules(bare)[0]['effective']!r}")
 
+# an embedded newline in vendor free text must not grow a fake extra CSV row
+messy = {"seasonality": {"seasonality_customization_on": True,
+                         "effective": "line one\nline two"}}
+check("an embedded newline in effective is scrubbed to a single line",
+      "\n" not in rc.normalize_rules(messy)[0]["effective"],
+      f"got {rc.normalize_rules(messy)[0]['effective']!r}")
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:
