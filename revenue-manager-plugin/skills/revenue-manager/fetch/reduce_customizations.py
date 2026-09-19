@@ -152,6 +152,14 @@ def rule_value(rule: str, cfg: dict) -> str:
     return "-"
 
 
+def clean_text(value, fallback: str = "") -> str:
+    """CSV-safe free text: None and missing both become the fallback, and an
+    embedded newline never breaks a row for a reader parsing stdout line by line."""
+    if value is None or value == "":
+        return fallback
+    return str(value).replace("\n", " ")
+
+
 def normalize_rules(customizations: dict) -> list[dict]:
     """One row per rule present in the payload, off rules included and flagged."""
     out = []
@@ -167,7 +175,7 @@ def normalize_rules(customizations: dict) -> list[dict]:
             "type": str(cfg.get(TYPE_KEY.get(rule, ""), "") or "-"),
             "value": rule_value(rule, cfg),
             "window": rule_window(rule, cfg),
-            "effective": str(effective).replace("\n", " ") if effective else "(no effective block returned)",
+            "effective": clean_text(effective, "(no effective block returned)"),
         })
     return out
 
@@ -180,10 +188,16 @@ def flatten_actions(payload) -> list[list]:
             continue
         for action in entry.get("actions") or []:
             meta = action.get("metadata") or {}
-            out.append([action.get("action_type", ""), str(action.get("title", "")).replace("\n", " "),
+            out.append([action.get("action_type", ""), clean_text(action.get("title")),
                         json.dumps(meta.get("current", {}), separators=(",", ":")),
                         json.dumps(meta.get("recommended", {}), separators=(",", ":"))])
     return out
+
+
+def flatten_profiles(payload) -> list[list]:
+    profiles_raw = (payload or {}).get("profiles") or {}
+    return [[kind, p.get("id"), clean_text(p.get("name")), p.get("archived")]
+            for kind, items in profiles_raw.items() for p in (items or [])]
 
 
 def load_or_fetch(listing: str, pms: str, ttl_days: float, use_cache: bool,
@@ -236,9 +250,7 @@ def main() -> int:
         raise CannotProduce(f"unexpected customizations shape: {type(customizations).__name__}")
     rules = normalize_rules(customizations)
 
-    profiles_raw = (data["profiles"] or {}).get("profiles") or {}
-    profile_rows = [[kind, p.get("id"), str(p.get("name", "")).replace("\n", " "), p.get("archived")]
-                    for kind, items in profiles_raw.items() for p in (items or [])]
+    profile_rows = flatten_profiles(data["profiles"])
     action_rows = flatten_actions(data["actions"])
     nudges = (data["nudges"] or {}).get("nudges") or []
     log_rows = ((data["logs"] or {}).get("data") or []) if data["logs"] else []
@@ -263,12 +275,12 @@ def main() -> int:
     for n in nudges:
         writer.writerow([n.get("nudge_id", n.get("id", "")), n.get("field", ""),
                          n.get("current_value", ""), n.get("suggested_value", ""),
-                         str(n.get("reason", "")).replace("\n", " "), n.get("expires_at", "")])
+                         clean_text(n.get("reason")), n.get("expires_at", "")])
     print("## logs"); writer.writerow(LOG_COLUMNS)
     for entry in log_rows:
         writer.writerow([entry.get("created_at", ""), entry.get("action", ""),
                          (entry.get("user") or {}).get("id", ""),
-                         str(entry.get("action_label", "")).replace("\n", " ")])
+                         clean_text(entry.get("action_label"))])
     return 0
 
 

@@ -158,6 +158,39 @@ check("an embedded newline in effective is scrubbed to a single line",
       "\n" not in rc.normalize_rules(messy)[0]["effective"],
       f"got {rc.normalize_rules(messy)[0]['effective']!r}")
 
+# --- clean_text: the shared free-text helper behind all five vendor-text columns ----
+check("clean_text renders an explicit None as the fallback, not the string 'None'",
+      rc.clean_text(None) == "", f"got {rc.clean_text(None)!r}")
+check("clean_text renders an empty string as the fallback too",
+      rc.clean_text("") == "", f"got {rc.clean_text('')!r}")
+check("clean_text honors a custom fallback for None",
+      rc.clean_text(None, "(no effective block returned)") == "(no effective block returned)")
+check("clean_text scrubs an embedded newline in real text",
+      rc.clean_text("line one\nline two") == "line one line two",
+      f"got {rc.clean_text('line one' + chr(10) + 'line two')!r}")
+
+# title (flatten_actions) and name (flatten_profiles): the two sites the reviewer
+# proved print the literal text "None" for an explicit null. Both must now render an
+# empty cell for a null AND for a missing key -- .get() makes those indistinguishable
+# by the time clean_text sees them, so both need their own check.
+actions_null_title = {"data": [{"actions": [{"action_type": "x", "title": None, "metadata": {}}]}]}
+actions_missing_title = {"data": [{"actions": [{"action_type": "x", "metadata": {}}]}]}
+check("flatten_actions renders an explicit null title as an empty cell, not 'None'",
+      rc.flatten_actions(actions_null_title)[0][1] == "",
+      f"got {rc.flatten_actions(actions_null_title)[0][1]!r}")
+check("flatten_actions renders a missing title as an empty cell",
+      rc.flatten_actions(actions_missing_title)[0][1] == "",
+      f"got {rc.flatten_actions(actions_missing_title)[0][1]!r}")
+
+profiles_null_name = {"profiles": {"minstay": [{"id": 1, "name": None, "archived": False}]}}
+profiles_missing_name = {"profiles": {"minstay": [{"id": 1, "archived": False}]}}
+check("flatten_profiles renders an explicit null name as an empty cell, not 'None'",
+      rc.flatten_profiles(profiles_null_name)[0][2] == "",
+      f"got {rc.flatten_profiles(profiles_null_name)[0][2]!r}")
+check("flatten_profiles renders a missing name as an empty cell",
+      rc.flatten_profiles(profiles_missing_name)[0][2] == "",
+      f"got {rc.flatten_profiles(profiles_missing_name)[0][2]!r}")
+
 # --- summary ----------------------------------------------------------------
 print()
 if fails:
