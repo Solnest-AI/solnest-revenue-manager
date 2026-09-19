@@ -140,3 +140,37 @@ writing any client. Endpoint field detail is in `pricelabs-api/`; tool list in `
   fields. An ETL reading the old names silently bucketed every listing as market "unknown".
   Nine days. **Key-check every pull** and regenerate `pricelabs-api/` with
   `python3 tools/pricelabs_spec_report.py --fetch`.
+
+## `get_actions` and the two sign conventions (measured 2026-09-18)
+
+`GET /v1/actions` returns PriceLabs' own issue list per listing. On the probe listing:
+
+```
+action_type: last_minute_conservative_vs_market
+current:     { discount_pct: -12.0, days_from_date: 7 }
+recommended: { discount_pct:  40.0, days_from_date: 10 }
+```
+
+The listing's stored rule is `last_min_factor_value: -12.0`, so **`current.discount_pct` is the
+stored SIGNED value** (negative = discount) echoed verbatim. **`recommended.discount_pct` is a
+positive magnitude**: the action type means "you discount less than the market", so 40 is a 40%
+discount, not a 40% premium.
+
+**The two fields in the same object do not share a convention.** Copying
+`recommended.discount_pct` into `last_min_factor_value` writes **+40, a 40% premium**, on a live
+guest-facing calendar, and the API returns success because a premium is a legitimate setting.
+Negate it, and re-read the `effective` block to confirm the direction before trusting any write.
+
+This is inferred from the stored value matching `current` exactly plus the meaning of the action
+type. It is **not confirmed by a write.** Confirm it with PriceLabs, or with one controlled write
+on a listing that is not taking bookings, before any automated apply.
+
+## Reading a rule that is switched off
+
+`GET /v1/customizations/listing` **omits every toggled-off rule by default.** On the probe listing the
+default call returns 4 rules and `toggled_on=false` returns 6. The two hidden ones were
+`seasonality` and `custom_seasonal_profile`, and the seasonal profile was **not empty**: it held
+two stored seasons, at -5% and +5%, waiting for someone to flip the toggle.
+
+A dormant config with real values in it is invisible to the default call. Always pass
+`toggled_on=false`.

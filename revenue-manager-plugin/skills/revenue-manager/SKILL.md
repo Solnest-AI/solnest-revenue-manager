@@ -274,6 +274,19 @@ Never infer the markup from `PMS calendar ÷ PriceLabs price`: that ratio is the
 
 ## Step 4 — Parallel pull (spawn in one message with two Agent calls)
 
+> **Read these two before the first PriceLabs call of the run. Not optional.**
+> - `references/pricelabs-gotchas.md` — every measured trap: the WAF 403, the 60/min and
+>   1,000/hour limits, `reservation_data` ignoring `listing_id`, decaying override history,
+>   the sentinels, "off is not off", and the two sign conventions inside `get_actions`.
+> - `references/pricelabs-coverage.md` — all 43 operations, which step owns each one, which
+>   `references/pricelabs-api/` file has its parameters, and what a live probe returned.
+>
+> **Entitlement varies by account.** On the reference account the Revenue Estimator returns
+> `403 API_KEY_UNAUTHORIZED` and the Listing Optimizer has no report. A 403 on those two is a
+> plan boundary, not an auth failure. When an endpoint is new to you on a client account, run
+> `python3 tools/pricelabs_endpoint_probe.py --listing-id <id> --pms <pms>` once and read the
+> table before designing around it. The probe never fires a write.
+
 > ### 4.0 — Pull prices through the reducer, never through the raw MCP
 >
 > **`pricelabs_get_listing_prices` must not be called directly for a full horizon.** The connector returns `JSON.stringify(data, null, 2)`, and that return value lands in context verbatim — the cost is paid the moment the tool is called, and no amount of post-processing gets it back. Measured on one live listing over 366 forward dates:
@@ -534,6 +547,13 @@ Offer the multi-tab Excel workbook once the recommendations are presented. If th
 
 ## Step 8 — Execute changes (only on human approval)
 
+> **Before any PriceLabs write, re-read `references/pricelabs-gotchas.md`** and the
+> `references/pricelabs-api/` file for the endpoint you are about to call. The write traps are
+> not memorable and they fail silently with a 200: omitted day-of-week days reset to 0, the
+> sign is accepted either way, a customization write is all-or-nothing, toggling a rule off
+> resets its stored config, and a `custom_seasonal_profile` write replaces every season.
+> `references/pricelabs-coverage.md` says which file covers which operation.
+
 When the user approves specific changes:
 1. Re-confirm each change still passes the safety layer (bounds, max-delta, currency) **and the write-path unit conversion below**.
 2. Push via the detected stack's mutation tool — resolve the actual tool name from Step 0 detection, **never assume Hospitable**:
@@ -563,6 +583,7 @@ Platform-specific parsing for every supported PMS (field names, units such as Ho
 PriceLabs, Wheelhouse and Beyond tool names, field traps and raw payload shapes, for reference. Read `references/pricing-tool-fields.md` only if a reducer exits 2 and you need to reason about the raw source, or the pricing tool is not PriceLabs.
 
 ### `references/pricelabs-gotchas.md` — READ BEFORE ANY PRICELABS CALL OR WRITE
+*(Step 4 and Step 8 both name this file inline. This entry is the index copy.)*
 Every measured PriceLabs trap in one place: auth and the WAF 403, the 60/min and 1,000/hour
 limits, the much tighter refresh limit, offset pagination, `reservation_data` returning the whole
 account, decaying override history, the custom comp-set payload shape, the sentinels, the
@@ -580,10 +601,11 @@ never the whole directory. Rebuild with `python3 tools/pricelabs_spec_report.py 
 PriceLabs renamed `/v1/listings` fields inside nine days in Aug-Sep 2026 and a client reading the
 old names failed silently.
 
-### `references/pricelabs-coverage.md` — what we use vs what exists
-The reducers touch 6 of 41 Customer API operations. This file lists what is unused, ordered by
-what it would change, including the three diagnostics PriceLabs already computes that Step 4
-currently rebuilds by hand.
+### `references/pricelabs-coverage.md` — the routing table for all 43 operations
+Every published operation, what it answers, **which runbook step owns it**, which
+`pricelabs-api/` file documents it, and what a live probe returned on a real account.
+Start here when you need an endpoint the reducers do not already cover. Regenerate the
+live column with `python3 tools/pricelabs_endpoint_probe.py`.
 
 ## Optional enrichment reference (detect-and-use; never a critical path)
 

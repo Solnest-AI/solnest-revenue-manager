@@ -1,6 +1,25 @@
 # Changelog
 
-## 4.2.0-rc7 (unreleased)
+## 4.2.0-rc8 (unreleased)
+
+- Reference pointers now fire from inside Step 4 and Step 8 instead of only from the appendix.
+  The gotchas file told the reader to consult it "at Step 4 and again at Step 8", but that
+  instruction lived after Step 9, so a run following the steps in order never saw it.
+- `references/pricelabs-coverage.md` rewritten as the routing table for all 43 published
+  operations: what each answers, which step owns it, which `pricelabs-api/` file documents it,
+  and what a live probe returned.
+- New `tools/pricelabs_endpoint_probe.py`: probes every published operation against one listing,
+  writes raw bodies to the cache, prints a status table. State-changing operations are
+  enumerated and never fired; one can be forced with `--only <key> --i-know-this-writes`.
+- Gotchas: `get_actions` uses two different sign conventions in the same object
+  (`current.discount_pct` signed, `recommended.discount_pct` a magnitude), so copying the
+  recommendation into a customization write inverts a discount into a premium.
+- Gotchas: `GET /v1/customizations/listing` hides every toggled-off rule unless
+  `toggled_on=false` is passed, including dormant profiles holding real values.
+- Design spec for the customization layer at
+  `docs/superpowers/specs/2026-09-18-pricelabs-customization-layer-design.md`. Not implemented.
+
+## 4.2.0-rc7
 
 - **Complete PriceLabs surface, documented and checked in.** Researched the published OpenAPI 3.1
   specs, all 89 doc pages and the live MCP catalog, then measured what the skill actually uses.
